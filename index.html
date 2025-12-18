@@ -7,8 +7,13 @@
     <title>SpeakCoaching AI</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-      // Production fix: Shim process for browser environments to prevent blank white page
-      window.process = window.process || { env: {} };
+      /**
+       * Production Fix: Shim 'process' global.
+       * Many ESM packages (including @google/genai) access process.env.
+       * In the browser, 'process' is not defined by default, which causes fatal ReferenceErrors.
+       */
+      window.process = window.process || {};
+      window.process.env = window.process.env || {};
     </script>
     <style>
       /* Custom Animations for Tailwind */

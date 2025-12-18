@@ -2,8 +2,9 @@
 import { GoogleGenAI, Content } from "@google/genai";
 
 // Compliance: Always use new GoogleGenAI({apiKey: process.env.API_KEY});
-// The process object is shimmed in index.html to prevent crashes if it's undefined.
-const ai = new GoogleGenAI({ apiKey: "AIzaSyAmMDkMjyK1D-hPQtO1A6Qmt_19mC5cWjI" });
+// The process object is shimmed in index.html to prevent ReferenceErrors.
+// This environment variable is injected by the platform.
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const SQL_SCHEMA = `
 -- 1. Create Users Table
