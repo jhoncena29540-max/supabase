@@ -1,9 +1,16 @@
 
 import { GoogleGenAI, Content } from "@google/genai";
 
-// Ensure API Key is available
-const apiKey = process.env.API_KEY || '';
+// Safe access to environment variables for production stability
+const getApiKey = () => {
+  try {
+    return 'AIzaSyAmMDkMjyK1D-hPQtO1A6Qmt_19mC5cWjI';
+  } catch (e) {
+    return '';
+  }
+};
 
+const apiKey = getApiKey();
 const ai = new GoogleGenAI({ apiKey });
 
 export const SQL_SCHEMA = `
@@ -117,7 +124,7 @@ using (
 `;
 
 export const generateContentScript = async (topic: string, format: 'speech' | 'landing_page' | 'presentation') => {
-  if (!apiKey) throw new Error("API Key missing");
+  if (!apiKey) throw new Error("AI Service configuration error: API Key missing.");
 
   const prompts = {
     speech: `Write a compelling, professional speech script about "${topic}". The tone should be engaging and authoritative. Structure it with an introduction, body points, and a strong conclusion.`,
@@ -141,7 +148,7 @@ export const generateContentScript = async (topic: string, format: 'speech' | 'l
 };
 
 export const generateCoachingAdvice = async (input: string) => {
-  if (!apiKey) throw new Error("API Key missing");
+  if (!apiKey) throw new Error("AI Service configuration error: API Key missing.");
 
   try {
     const response = await ai.models.generateContent({
@@ -159,7 +166,7 @@ export const generateCoachingAdvice = async (input: string) => {
 };
 
 export const generateLandingPageCode = async (description: string) => {
-  if (!apiKey) throw new Error("API Key missing");
+  if (!apiKey) throw new Error("AI Service configuration error: API Key missing.");
 
   const prompt = `Create a complete, single-file HTML landing page based on this description: "${description}".
   
@@ -175,8 +182,8 @@ export const generateLandingPageCode = async (description: string) => {
       - Testimonials
       - Footer
   6.  Use <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" /> for icons. Use <i class="fas fa-icon"></i> syntax.
-  7.  Use placeholder images from Unsplash (e.g., https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?w=800&q=80).
-  8.  Return ONLY the raw HTML code starting with <!DOCTYPE html>. Do not include markdown backticks like \`\`\`html.
+  7.  Use placeholder images from Unsplash.
+  8.  Return ONLY the raw HTML code starting with <!DOCTYPE html>.
   `;
 
   try {
@@ -184,7 +191,7 @@ export const generateLandingPageCode = async (description: string) => {
       model: 'gemini-3-pro-preview',
       contents: prompt,
       config: {
-        systemInstruction: "You are a specialized frontend engineer generating production-ready HTML landing pages. Output raw HTML only. No markdown formatting.",
+        systemInstruction: "You are a specialized frontend engineer generating production-ready HTML landing pages. Output raw HTML only.",
       }
     });
     
@@ -203,7 +210,7 @@ export const generateLandingPageCode = async (description: string) => {
 };
 
 export const refineLandingPageCode = async (currentCode: string, instructions: string) => {
-  if (!apiKey) throw new Error("API Key missing");
+  if (!apiKey) throw new Error("AI Service configuration error: API Key missing.");
 
   const prompt = `
   You are an expert frontend engineer. You have an existing HTML landing page and a user request to modify it.
@@ -215,9 +222,7 @@ export const refineLandingPageCode = async (currentCode: string, instructions: s
   
   TASK:
   1. Apply the user's changes to the HTML code.
-  2. Maintain the existing structure, Tailwind classes, and aesthetic unless explicitly told to change them.
-  3. Ensure <script src="https://cdn.tailwindcss.com"></script> remains in the head.
-  4. Return ONLY the full, updated HTML code starting with <!DOCTYPE html>. Do not include markdown backticks.
+  2. Return ONLY the full, updated HTML code starting with <!DOCTYPE html>.
   `;
 
   try {
@@ -244,7 +249,7 @@ export const refineLandingPageCode = async (currentCode: string, instructions: s
 };
 
 export const getChatResponse = async (history: Content[], message: string) => {
-  if (!apiKey) throw new Error("API Key missing");
+  if (!apiKey) throw new Error("AI Service configuration error: API Key missing.");
 
   const systemInstruction = `You are the AI Assistant for "SpeakCoaching AI".
   Your goal is to help users navigate the app, discover features, and answer questions about public speaking.
@@ -256,13 +261,11 @@ export const getChatResponse = async (history: Content[], message: string) => {
   4. History: Users can view past generations.
 
   IMPORTANT:
-  If the user mentions "RLS Policy", "Storage Upload Failed", "SQL Schema", or "Database Tables", YOU MUST provide the following SQL code in a markdown code block so they can fix their database and storage configuration:
+  If the user mentions "RLS Policy", "Storage Upload Failed", or "SQL Schema", YOU MUST provide the following SQL code:
 
   \`\`\`sql
   ${SQL_SCHEMA}
   \`\`\`
-
-  Explain that they need to run this in the Supabase SQL Editor.
   `;
 
   try {

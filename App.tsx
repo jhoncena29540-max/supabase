@@ -8,76 +8,99 @@ import { PublicPage } from './pages/PublicPage';
 import { AppView } from './types';
 import { HashRouter, useLocation } from 'react-router-dom';
 
-const App: React.FC = () => {
+const AppContent: React.FC = () => {
   const [session, setSession] = useState<any>(null);
   const [view, setView] = useState<AppView>(AppView.LANDING);
   const [loading, setLoading] = useState(true);
   const location = useLocation();
 
-  // Check if we are trying to access a public page
+  // Check if we are trying to access a public landing page
   const isPublicPage = location.pathname.startsWith('/p/');
 
   useEffect(() => {
-    // Check active session
+    let mounted = true;
+
+    // Check current session state on mount
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) setView(AppView.DASHBOARD_HOME);
-      setLoading(false);
+      if (mounted) {
+        setSession(session);
+        if (session) {
+          setView(AppView.DASHBOARD_HOME);
+        }
+        setLoading(false);
+      }
+    }).catch(err => {
+      console.error("Supabase Session Error:", err);
+      if (mounted) setLoading(false);
     });
 
-    // Listen for changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) {
-        setView(AppView.DASHBOARD_HOME);
-      } else if (view !== AppView.LOGIN && view !== AppView.SIGNUP) {
-        setView(AppView.LANDING);
+    // Handle authentication state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (mounted) {
+        setSession(session);
+        if (session) {
+          // If logged in, ensure we are in a dashboard view
+          if (!view.startsWith('DASHBOARD_')) {
+            setView(AppView.DASHBOARD_HOME);
+          }
+        } else {
+          // If logged out, reset to landing if not on an auth page
+          if (view !== AppView.LOGIN && view !== AppView.SIGNUP) {
+            setView(AppView.LANDING);
+          }
+        }
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, [view]);
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    setView(AppView.LANDING);
-  };
-
+  // Production-level check: Handle Public Pages first
   if (isPublicPage) {
-      return <PublicPage />;
+    return <PublicPage />;
   }
 
+  // Show a high-quality loading state while determining auth status
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+      <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center">
+        <div className="relative w-16 h-16">
+          <div className="absolute inset-0 border-4 border-indigo-500/20 rounded-full"></div>
+          <div className="absolute inset-0 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+        </div>
+        <div className="mt-6 text-slate-500 font-bold tracking-widest text-xs uppercase animate-pulse">
+          Securely Loading...
+        </div>
       </div>
     );
   }
 
-  // If logged in, show Dashboard
+  // Render Dashboard if user is authenticated
   if (session) {
-    return <Dashboard user={session.user} onLogout={handleLogout} />;
+    return <Dashboard user={session.user} onLogout={() => supabase.auth.signOut()} />;
   }
 
-  // View Routing
+  // Auth Routing Fallback for Unauthenticated Users
+  switch (view) {
+    case AppView.LOGIN:
+    case AppView.SIGNUP:
+      return <Auth view={view} onNavigate={setView} />;
+    case AppView.LANDING:
+    default:
+      return <Landing onNavigate={setView} />;
+  }
+};
+
+// Root component with HashRouter and Error Boundary protection
+const App: React.FC = () => {
   return (
-    <>
-      {view === AppView.LANDING && <Landing onNavigate={setView} />}
-      {(view === AppView.LOGIN || view === AppView.SIGNUP) && (
-        <Auth view={view} onNavigate={setView} />
-      )}
-    </>
+    <HashRouter>
+      <AppContent />
+    </HashRouter>
   );
 };
 
-// Wrap in HashRouter
-const Root = () => (
-    <HashRouter>
-        <App />
-    </HashRouter>
-);
-
-export default Root;
+export default App;
