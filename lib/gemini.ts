@@ -1,17 +1,9 @@
 
 import { GoogleGenAI, Content } from "@google/genai";
 
-// Safe access to environment variables for production stability
-const getApiKey = () => {
-  try {
-    return 'AIzaSyAmMDkMjyK1D-hPQtO1A6Qmt_19mC5cWjI';
-  } catch (e) {
-    return '';
-  }
-};
-
-const apiKey = getApiKey();
-const ai = new GoogleGenAI({ apiKey });
+// Compliance: Always use new GoogleGenAI({apiKey: process.env.API_KEY});
+// The process object is shimmed in index.html to prevent crashes if it's undefined.
+const ai = new GoogleGenAI({ apiKey: "AIzaSyAmMDkMjyK1D-hPQtO1A6Qmt_19mC5cWjI" });
 
 export const SQL_SCHEMA = `
 -- 1. Create Users Table
@@ -124,8 +116,6 @@ using (
 `;
 
 export const generateContentScript = async (topic: string, format: 'speech' | 'landing_page' | 'presentation') => {
-  if (!apiKey) throw new Error("AI Service configuration error: API Key missing.");
-
   const prompts = {
     speech: `Write a compelling, professional speech script about "${topic}". The tone should be engaging and authoritative. Structure it with an introduction, body points, and a strong conclusion.`,
     landing_page: `Generate high-converting landing page copy for a product or service related to "${topic}". Include a Headline, Subheadline, Feature List, and a Call to Action.`,
@@ -148,8 +138,6 @@ export const generateContentScript = async (topic: string, format: 'speech' | 'l
 };
 
 export const generateCoachingAdvice = async (input: string) => {
-  if (!apiKey) throw new Error("AI Service configuration error: API Key missing.");
-
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
@@ -166,24 +154,14 @@ export const generateCoachingAdvice = async (input: string) => {
 };
 
 export const generateLandingPageCode = async (description: string) => {
-  if (!apiKey) throw new Error("AI Service configuration error: API Key missing.");
-
   const prompt = `Create a complete, single-file HTML landing page based on this description: "${description}".
   
   CRITICAL TECHNICAL REQUIREMENTS:
   1.  MUST include <script src="https://cdn.tailwindcss.com"></script> in the <head>.
   2.  MUST include <meta name="viewport" content="width=device-width, initial-scale=1.0">.
   3.  The design must be "Modern SaaS" or "Glassmorphism".
-  4.  Add 'min-h-screen' class to the body to ensure full height.
-  5.  Structure: 
-      - Header (Logo + Nav)
-      - Hero Section (H1, Subtext, CTA Button)
-      - Features Grid (3 columns)
-      - Testimonials
-      - Footer
-  6.  Use <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" /> for icons. Use <i class="fas fa-icon"></i> syntax.
-  7.  Use placeholder images from Unsplash.
-  8.  Return ONLY the raw HTML code starting with <!DOCTYPE html>.
+  4.  Structure: Header, Hero, Features, Testimonials, Footer.
+  5.  Return ONLY raw HTML.
   `;
 
   try {
@@ -191,7 +169,7 @@ export const generateLandingPageCode = async (description: string) => {
       model: 'gemini-3-pro-preview',
       contents: prompt,
       config: {
-        systemInstruction: "You are a specialized frontend engineer generating production-ready HTML landing pages. Output raw HTML only.",
+        systemInstruction: "You are a specialized frontend engineer. Output raw HTML only.",
       }
     });
     
@@ -210,19 +188,10 @@ export const generateLandingPageCode = async (description: string) => {
 };
 
 export const refineLandingPageCode = async (currentCode: string, instructions: string) => {
-  if (!apiKey) throw new Error("AI Service configuration error: API Key missing.");
-
   const prompt = `
-  You are an expert frontend engineer. You have an existing HTML landing page and a user request to modify it.
-  
-  USER INSTRUCTION: "${instructions}"
-  
+  Modify this HTML landing page: "${instructions}"
   CURRENT HTML:
   ${currentCode}
-  
-  TASK:
-  1. Apply the user's changes to the HTML code.
-  2. Return ONLY the full, updated HTML code starting with <!DOCTYPE html>.
   `;
 
   try {
@@ -249,24 +218,7 @@ export const refineLandingPageCode = async (currentCode: string, instructions: s
 };
 
 export const getChatResponse = async (history: Content[], message: string) => {
-  if (!apiKey) throw new Error("AI Service configuration error: API Key missing.");
-
-  const systemInstruction = `You are the AI Assistant for "SpeakCoaching AI".
-  Your goal is to help users navigate the app, discover features, and answer questions about public speaking.
-
-  App Features:
-  1. Content Studio: Users can generate speech scripts, landing page copy, and presentation talking points.
-  2. Speak Coaching: Users paste text to get feedback on Tone, Clarity, and Confidence.
-  3. Landing Page Builder: Users create HTML landing pages via prompts, view live previews (desktop/mobile), and publish them.
-  4. History: Users can view past generations.
-
-  IMPORTANT:
-  If the user mentions "RLS Policy", "Storage Upload Failed", or "SQL Schema", YOU MUST provide the following SQL code:
-
-  \`\`\`sql
-  ${SQL_SCHEMA}
-  \`\`\`
-  `;
+  const systemInstruction = `You are the AI Assistant for "SpeakCoaching AI". Help users with public speaking and app navigation. If they need to fix database issues, show them the SQL_SCHEMA.`;
 
   try {
     const chat = ai.chats.create({

@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, Component, ErrorInfo, ReactNode } from 'react';
 import { supabase } from './lib/supabase';
 import { Landing } from './pages/Landing';
 import { Auth } from './pages/Auth';
@@ -7,6 +7,47 @@ import { Dashboard } from './pages/Dashboard';
 import { PublicPage } from './pages/PublicPage';
 import { AppView } from './types';
 import { HashRouter, useLocation } from 'react-router-dom';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
+
+// Production-ready Error Boundary
+class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean, error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("App Crash:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-[#020617] flex items-center justify-center p-6 text-center">
+          <div className="max-w-md bg-slate-900 border border-red-500/20 rounded-3xl p-8 shadow-2xl">
+            <div className="w-16 h-16 bg-red-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6 text-red-500">
+              <AlertTriangle size={32} />
+            </div>
+            <h1 className="text-2xl font-bold text-white mb-2">Something went wrong</h1>
+            <p className="text-slate-400 mb-8">{this.state.error?.message || "An unexpected error occurred in the component tree."}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold mx-auto transition-all"
+            >
+              <RefreshCw size={18} />
+              Reload Application
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const AppContent: React.FC = () => {
   const [session, setSession] = useState<any>(null);
@@ -14,13 +55,18 @@ const AppContent: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const location = useLocation();
 
-  // Check if we are trying to access a public landing page
   const isPublicPage = location.pathname.startsWith('/p/');
 
   useEffect(() => {
     let mounted = true;
 
-    // Check current session state on mount
+    const timeout = setTimeout(() => {
+      if (mounted && loading) {
+        console.warn("Auth initialization timed out.");
+        setLoading(false);
+      }
+    }, 5000);
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (mounted) {
         setSession(session);
@@ -28,23 +74,24 @@ const AppContent: React.FC = () => {
           setView(AppView.DASHBOARD_HOME);
         }
         setLoading(false);
+        clearTimeout(timeout);
       }
     }).catch(err => {
       console.error("Supabase Session Error:", err);
-      if (mounted) setLoading(false);
+      if (mounted) {
+        setLoading(false);
+        clearTimeout(timeout);
+      }
     });
 
-    // Handle authentication state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (mounted) {
         setSession(session);
         if (session) {
-          // If logged in, ensure we are in a dashboard view
           if (!view.startsWith('DASHBOARD_')) {
             setView(AppView.DASHBOARD_HOME);
           }
         } else {
-          // If logged out, reset to landing if not on an auth page
           if (view !== AppView.LOGIN && view !== AppView.SIGNUP) {
             setView(AppView.LANDING);
           }
@@ -55,15 +102,14 @@ const AppContent: React.FC = () => {
     return () => {
       mounted = false;
       subscription.unsubscribe();
+      clearTimeout(timeout);
     };
-  }, [view]);
+  }, [view, loading]);
 
-  // Production-level check: Handle Public Pages first
   if (isPublicPage) {
     return <PublicPage />;
   }
 
-  // Show a high-quality loading state while determining auth status
   if (loading) {
     return (
       <div className="min-h-screen bg-[#020617] flex flex-col items-center justify-center">
@@ -71,19 +117,17 @@ const AppContent: React.FC = () => {
           <div className="absolute inset-0 border-4 border-indigo-500/20 rounded-full"></div>
           <div className="absolute inset-0 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
         </div>
-        <div className="mt-6 text-slate-500 font-bold tracking-widest text-xs uppercase animate-pulse">
-          Securely Loading...
+        <div className="mt-6 text-slate-500 font-bold tracking-widest text-[10px] uppercase animate-pulse">
+          SpeakCoaching AI Initializing...
         </div>
       </div>
     );
   }
 
-  // Render Dashboard if user is authenticated
   if (session) {
     return <Dashboard user={session.user} onLogout={() => supabase.auth.signOut()} />;
   }
 
-  // Auth Routing Fallback for Unauthenticated Users
   switch (view) {
     case AppView.LOGIN:
     case AppView.SIGNUP:
@@ -94,12 +138,13 @@ const AppContent: React.FC = () => {
   }
 };
 
-// Root component with HashRouter and Error Boundary protection
 const App: React.FC = () => {
   return (
-    <HashRouter>
-      <AppContent />
-    </HashRouter>
+    <ErrorBoundary>
+      <HashRouter>
+        <AppContent />
+      </HashRouter>
+    </ErrorBoundary>
   );
 };
 

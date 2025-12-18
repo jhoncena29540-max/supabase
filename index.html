@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -5,6 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SpeakCoaching AI</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      // Production fix: Shim process for browser environments to prevent blank white page
+      window.process = window.process || { env: {} };
+    </script>
     <style>
       /* Custom Animations for Tailwind */
       @keyframes blob {
@@ -22,6 +27,21 @@
       .animation-delay-4000 {
         animation-delay: 4s;
       }
+      
+      /* Smooth scrollbar for better UX */
+      .custom-scrollbar::-webkit-scrollbar {
+        width: 6px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: rgba(99, 102, 241, 0.2);
+        border-radius: 10px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background: rgba(99, 102, 241, 0.4);
+      }
     </style>
   <script type="importmap">
 {
@@ -37,7 +57,7 @@
 }
 </script>
 </head>
-  <body>
+  <body class="bg-[#020617]">
     <div id="root"></div>
   </body>
 </html>
