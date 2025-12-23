@@ -604,7 +604,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
                                             <ExternalLink size={14} /> View Post
                                         </a>
                                     )}
-                                    {/* Info icon is used here */}
                                     <Button variant="ghost" className="text-xs !px-4"><Info size={14} className="mr-2"/> Details</Button>
                                 </div>
                             </Card>
@@ -1065,7 +1064,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
                             <span className="text-xs font-bold uppercase text-slate-400">{selectedPage?.is_published ? 'Live' : 'Draft'}</span>
                         </div>
                         <button onClick={() => handleSave(false)} disabled={saving} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-slate-800 hover:bg-slate-700 text-white border border-slate-700"><Save size={16}/> Save Draft</button>
-                        <Button onClick={() => handleSave(true)} isLoading={saving} className="!bg-indigo-600 hover:!bg-indigo-500 !py-2 !px-6 !text-sm !font-bold shadow-xl shadow-indigo-600/20"><Globe size={18} /> Publish Live</button>
+                        <Button onClick={() => handleSave(true)} isLoading={saving} className="!bg-indigo-600 hover:!bg-indigo-500 !py-2 !px-6 !text-sm !font-bold shadow-xl shadow-indigo-600/20"><Globe size={18} /> Publish Live</Button>
                     </div>
                 )}
             </div>
@@ -1160,7 +1159,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
                                         <p className="text-white font-bold tracking-widest text-sm uppercase">Updating Design...</p>
                                    </div>
                                )}
-                               <iframe srcDoc={code} className="w-full h-full bg-white" title="Preview" sandbox="allow-scripts" />
+                               {/* Corrected srcDoc to use the 'code' state variable instead of undefined 'html' */}
+                               <iframe srcDoc={code || ''} className="w-full h-full bg-white" title="Preview" sandbox="allow-scripts" />
                             </div>
                         )}
                      </div>
