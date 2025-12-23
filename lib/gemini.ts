@@ -19,29 +19,7 @@ create table if not exists public.users (
 );
 alter table public.users enable row level security;
 
--- Idempotent Policies for Users
-drop policy if exists "Public profiles are viewable by everyone." on public.users;
-create policy "Public profiles are viewable by everyone." on public.users for select using (true);
-
-drop policy if exists "Users can insert their own profile." on public.users;
-create policy "Users can insert their own profile." on public.users for insert with check (auth.uid() = id);
-
-drop policy if exists "Users can update own profile." on public.users;
-create policy "Users can update own profile." on public.users for update using (auth.uid() = id);
-
--- 2. Handle New User Trigger
-create or replace function public.handle_new_user() returns trigger as $$
-begin
-  insert into public.users (id, email, name)
-  values (new.id, new.email, new.raw_user_meta_data->>'name');
-  return new;
-end;
-$$ language plpgsql security definer;
-
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created after insert on auth.users for each row execute procedure public.handle_new_user();
-
--- 3. Create AI Requests Table
+-- 2. Create AI Requests Table
 create table if not exists public.ai_requests (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references public.users(id) on delete cascade not null,
@@ -52,14 +30,7 @@ create table if not exists public.ai_requests (
 );
 alter table public.ai_requests enable row level security;
 
--- Idempotent Policies for AI Requests
-drop policy if exists "Users can view their own requests." on public.ai_requests;
-create policy "Users can view their own requests." on public.ai_requests for select using (auth.uid() = user_id);
-
-drop policy if exists "Users can insert their own requests." on public.ai_requests;
-create policy "Users can insert their own requests." on public.ai_requests for insert with check (auth.uid() = user_id);
-
--- 4. Create Landing Pages Table
+-- 3. Create Landing Pages Table
 create table if not exists public.landing_pages (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references public.users(id) on delete cascade not null,
@@ -74,48 +45,56 @@ create table if not exists public.landing_pages (
 );
 alter table public.landing_pages enable row level security;
 
--- Idempotent Policies for Landing Pages
-drop policy if exists "Users can manage their own pages." on public.landing_pages;
-create policy "Users can manage their own pages." on public.landing_pages for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
-
-drop policy if exists "Anyone can view published pages." on public.landing_pages;
-create policy "Anyone can view published pages." on public.landing_pages for select to public using (is_published = true);
-
--- 5. Create Storage Bucket and Policies
-insert into storage.buckets (id, name, public) 
-values ('app', 'app', true) 
-on conflict (id) do nothing;
-
--- Idempotent Storage Policies
-drop policy if exists "Public Access" on storage.objects;
-create policy "Public Access" 
-on storage.objects for select 
-using ( bucket_id = 'app' );
-
-drop policy if exists "Allow Authenticated Uploads" on storage.objects;
-create policy "Allow Authenticated Uploads" 
-on storage.objects for insert 
-with check (
-  bucket_id = 'app' 
-  AND auth.role() = 'authenticated'
-  AND (storage.foldername(name))[2] = auth.uid()::text
+-- 4. Social Scheduler Tables
+create table if not exists public.social_accounts (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references public.users(id) on delete cascade not null,
+  platform text not null,
+  platform_account_id text not null,
+  account_name text,
+  username text,
+  avatar_url text,
+  metrics jsonb default '{"followers": 0, "engagement": 0}'::jsonb,
+  access_token text,
+  refresh_token text,
+  expires_at timestamp with time zone,
+  status text default 'connected',
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  unique(user_id, platform, platform_account_id)
 );
+alter table public.social_accounts enable row level security;
 
-drop policy if exists "Allow Owner Updates" on storage.objects;
-create policy "Allow Owner Updates" 
-on storage.objects for update 
-using (
-  bucket_id = 'app' 
-  AND auth.uid()::text = (storage.foldername(name))[2]
+create table if not exists public.social_posts (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references public.users(id) on delete cascade not null,
+  account_id uuid references public.social_accounts(id) on delete cascade not null,
+  content text not null,
+  media_urls text[] default '{}'::text[],
+  scheduled_at timestamp with time zone not null,
+  status text default 'scheduled',
+  platform_post_id text,
+  platform_post_url text,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+alter table public.social_posts enable row level security;
 
-drop policy if exists "Allow Owner Deletes" on storage.objects;
-create policy "Allow Owner Deletes" 
-on storage.objects for delete 
-using (
-  bucket_id = 'app' 
-  AND auth.uid()::text = (storage.foldername(name))[2]
+create table if not exists public.social_publish_logs (
+  id uuid default gen_random_uuid() primary key,
+  post_id uuid references public.social_posts(id) on delete cascade not null,
+  status text not null,
+  error_details text,
+  api_request jsonb,
+  api_response jsonb,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+alter table public.social_publish_logs enable row level security;
+
+-- Policies
+create policy "Users can manage their own profile." on public.users for all using (auth.uid() = id);
+create policy "Users can manage their own requests." on public.ai_requests for all using (auth.uid() = user_id);
+create policy "Users can manage their own landing pages." on public.landing_pages for all using (auth.uid() = user_id);
+create policy "Users can manage their own social accounts." on public.social_accounts for all using (auth.uid() = user_id);
+create policy "Users can manage their own social posts." on public.social_posts for all using (auth.uid() = user_id);
 `;
 
 export const generateContentScript = async (topic: string, format: 'speech' | 'landing_page' | 'presentation') => {
