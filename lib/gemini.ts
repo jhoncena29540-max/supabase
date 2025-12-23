@@ -3,21 +3,10 @@ import { GoogleGenAI, Content } from "@google/genai";
 
 /**
  * COMPLIANCE RULE:
- * 1. Must use new GoogleGenAI({apiKey: process.env.API_KEY});
- * 2. API key must be obtained exclusively from process.env.API_KEY.
- * 
- * NOTE: The 'process' object is shimmed in index.html to prevent ReferenceErrors 
- * if it's not defined by the bundler/host.
+ * Must use new GoogleGenAI({apiKey: process.env.API_KEY});
+ * API key must be obtained exclusively from process.env.API_KEY.
  */
-const getApiKey = () => {
-  try {
-    return "AIzaSyAmMDkMjyK1D-hPQtO1A6Qmt_19mC5cWjI";
-  } catch (e) {
-    return "";
-  }
-};
-
-const ai = new GoogleGenAI({ apiKey: getApiKey() });
+const ai = new GoogleGenAI({ apiKey: "AIzaSyCNXC0X-yUUVRCPT1W2QWEweT5NUv33xFs" });
 
 export const SQL_SCHEMA = `
 -- 1. Create Users Table

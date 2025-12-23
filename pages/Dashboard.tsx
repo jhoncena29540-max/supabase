@@ -1,15 +1,16 @@
 
-
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { Sidebar } from '../components/Sidebar';
 import { AppView, UserProfile, AIRequest, LandingPage } from '../types';
-import { Menu, Search, Bell, Sparkles, Copy, Trash2, Check, ChevronDown, ChevronUp, ChevronRight, Loader2, AlertTriangle, ExternalLink, Globe, Code, Layout, Save, Plus, ArrowLeft, RefreshCw, Monitor, Smartphone, Link as LinkIcon, Send, Bot, User, Tablet, Wand2, Layers, History as HistoryIcon, Eye, Maximize2, MoreHorizontal, PenLine, FileText, Users, Target, Rocket, CheckCircle, X, Bookmark, Share2 } from 'lucide-react';
+// Added Info icon to the lucide-react import
+import { Menu, Search, Bell, Sparkles, Copy, Trash2, Check, ChevronDown, ChevronUp, ChevronRight, Loader2, AlertTriangle, ExternalLink, Globe, Code, Layout, Save, Plus, ArrowLeft, RefreshCw, Monitor, Smartphone, Link as LinkIcon, Send, Bot, User, Tablet, Wand2, Layers, History as HistoryIcon, Eye, Maximize2, MoreHorizontal, PenLine, FileText, Users, Target, Rocket, CheckCircle, X, Bookmark, Share2, Mail, Youtube, Instagram, Facebook, Music2, Calendar, Clock, BarChart, PlusCircle, CheckCircle2, History as LogsIcon, Info } from 'lucide-react';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Input, TextArea } from '../components/Input';
 import { generateContentScript, generateCoachingAdvice, generateLandingPageCode, refineLandingPageCode, getChatResponse } from '../lib/gemini';
 import { Content } from "@google/genai";
+import emailjs from '@emailjs/browser';
 
 interface DashboardProps {
   user: any; // Supabase auth user
@@ -141,7 +142,7 @@ const FormattedResponse = ({ content, title = "Generated Result" }: { content: s
                 )}
                 {sections.map((section, idx) => (
                     <div key={idx} className="border border-indigo-500/20 rounded-xl bg-slate-800/30 overflow-hidden transition-all duration-300">
-                        <button onClick={() => toggleSection(idx)} className={`w-full flex items-center justify-between p-4 text-left transition-colors ${openSections.includes(idx) ? 'bg-indigo-900/20 text-indigo-300' : 'hover:bg-slate-700/30 text-slate-300'}`}>
+                        <button onClick={() => toggleSection(idx)} className={`w-full flex items-center gap-2 p-4 text-left transition-colors ${openSections.includes(idx) ? 'bg-indigo-900/20 text-indigo-300' : 'hover:bg-slate-700/30 text-slate-300'}`}>
                             <h4 className="font-bold text-lg flex items-center gap-2">
                                 {openSections.includes(idx) ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                                 {section.title}
@@ -310,6 +311,439 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
     );
   };
 
+  const SocialSchedulerView = () => {
+    const [activeTab, setActiveTab] = useState<'accounts' | 'create' | 'scheduled' | 'logs'>('accounts');
+    const [socialAccounts, setSocialAccounts] = useState<any[]>([]);
+    const [scheduledPosts, setScheduledPosts] = useState<any[]>([]);
+    const [logs, setLogs] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    // Form states
+    const [selectedAccountId, setSelectedAccountId] = useState('');
+    const [content, setContent] = useState('');
+    const [scheduleTime, setScheduleTime] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    useEffect(() => {
+        fetchSocialData();
+    }, []);
+
+    const fetchSocialData = async () => {
+        setLoading(true);
+        try {
+            const { data: accounts } = await supabase.from('social_accounts').select('*').eq('user_id', user.id);
+            const { data: posts } = await supabase.from('social_posts').select('*, social_accounts(account_name, platform)').eq('user_id', user.id).order('scheduled_at', { ascending: true });
+            const { data: publishLogs } = await supabase.from('social_publish_logs').select('*, social_posts(content, platform_post_url)').order('created_at', { ascending: false });
+            
+            if (accounts) setSocialAccounts(accounts);
+            if (posts) setScheduledPosts(posts);
+            if (publishLogs) setLogs(publishLogs);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleConnectAccount = (platform: string) => {
+        // Simulation of OAuth trigger
+        alert(`Starting OAuth flow for ${platform}. In production, this would redirect to the platform authorization page.`);
+        // Note: Real implementation uses Supabase Edge Functions to handle /oauth/callback
+    };
+
+    const handleCreatePost = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!selectedAccountId || !content || !scheduleTime) return;
+        
+        setIsSubmitting(true);
+        try {
+            const { error } = await supabase.from('social_posts').insert({
+                user_id: user.id,
+                account_id: selectedAccountId,
+                content: content,
+                scheduled_at: new Date(scheduleTime).toISOString(),
+                status: 'scheduled'
+            });
+            if (error) throw error;
+            alert("Post scheduled successfully!");
+            setContent('');
+            setScheduleTime('');
+            fetchSocialData();
+            setActiveTab('scheduled');
+        } catch (e) {
+            console.error(e);
+            alert("Failed to schedule post.");
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const getPlatformIcon = (platform: string) => {
+        switch (platform.toLowerCase()) {
+            case 'youtube': return <Youtube className="text-red-500" />;
+            case 'facebook': return <Facebook className="text-blue-500" />;
+            case 'instagram': return <Instagram className="text-pink-500" />;
+            case 'tiktok': return <Music2 className="text-emerald-400" />;
+            default: return <Share2 className="text-slate-400" />;
+        }
+    };
+
+    return (
+        <div className="max-w-6xl mx-auto space-y-6 animate-fade-in">
+            <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+                <div>
+                    <h2 className="text-3xl font-bold text-white mb-2 flex items-center gap-3">
+                        <Share2 className="text-pink-500" /> Social Scheduler
+                    </h2>
+                    <p className="text-slate-400">Manage, schedule, and automate your multi-platform presence.</p>
+                </div>
+                <div className="flex bg-slate-900/50 p-1.5 rounded-2xl border border-white/5 backdrop-blur-md">
+                    {(['accounts', 'create', 'scheduled', 'logs'] as const).map(tab => (
+                        <button 
+                            key={tab} 
+                            onClick={() => setActiveTab(tab)}
+                            className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all duration-300 uppercase tracking-widest ${activeTab === tab ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}
+                        >
+                            {tab}
+                        </button>
+                    ))}
+                </div>
+            </header>
+
+            {activeTab === 'accounts' && (
+                <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 animate-fade-in">
+                    {/* Platforms to connect */}
+                    {['YouTube', 'Facebook', 'Instagram', 'TikTok'].map(platform => {
+                        const connected = socialAccounts.find(a => a.platform.toLowerCase() === platform.toLowerCase());
+                        return (
+                            <Card key={platform} className={`group relative overflow-hidden transition-all duration-500 hover:translate-y-[-5px] ${connected ? 'border-indigo-500/30 bg-indigo-500/5' : 'border-white/5 hover:border-white/10'}`}>
+                                <div className="flex items-center justify-between mb-6">
+                                    <div className={`p-3 rounded-2xl ${connected ? 'bg-indigo-500/20' : 'bg-slate-800'}`}>
+                                        {getPlatformIcon(platform)}
+                                    </div>
+                                    <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${connected ? 'bg-green-500/20 text-green-400' : 'bg-slate-800 text-slate-500'}`}>
+                                        {connected ? 'Connected' : 'Disconnected'}
+                                    </div>
+                                </div>
+                                
+                                {connected ? (
+                                    <div className="space-y-4">
+                                        <div className="flex items-center gap-3">
+                                            <img src={connected.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${connected.username}`} className="w-12 h-12 rounded-xl bg-slate-800 border border-white/10" alt="DP" />
+                                            <div className="overflow-hidden">
+                                                <div className="text-white font-bold truncate">{connected.account_name}</div>
+                                                <div className="text-slate-500 text-xs truncate">@{connected.username}</div>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2 pt-4 border-t border-white/5">
+                                            <div className="text-center">
+                                                <div className="text-xs font-bold text-slate-500 uppercase">Subscribers</div>
+                                                <div className="text-white font-black text-sm">{(connected.metrics?.followers || 0).toLocaleString()}</div>
+                                            </div>
+                                            <div className="text-center">
+                                                <div className="text-xs font-bold text-slate-500 uppercase">Engagement</div>
+                                                <div className="text-white font-black text-sm">{(connected.metrics?.engagement || 0).toFixed(1)}%</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-6 py-4">
+                                        <h4 className="text-slate-300 font-bold">Connect your {platform} account to start scheduling.</h4>
+                                        <Button onClick={() => handleConnectAccount(platform)} className="w-full !py-3">Connect {platform}</Button>
+                                    </div>
+                                )}
+                            </Card>
+                        )
+                    })}
+                </div>
+            )}
+
+            {activeTab === 'create' && (
+                <div className="grid lg:grid-cols-3 gap-8 animate-fade-in">
+                    <Card className="lg:col-span-2">
+                        <form onSubmit={handleCreatePost} className="space-y-6">
+                            <div className="space-y-2">
+                                <label className="text-sm font-bold text-slate-400 uppercase tracking-widest">Target Account</label>
+                                <select 
+                                    value={selectedAccountId} 
+                                    onChange={(e) => setSelectedAccountId(e.target.value)}
+                                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                                    required
+                                >
+                                    <option value="">Select a connected account</option>
+                                    {socialAccounts.map(acc => (
+                                        <option key={acc.id} value={acc.id}>{acc.platform.toUpperCase()} - {acc.account_name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <TextArea 
+                                label="Post Content" 
+                                placeholder="Write what's on your mind... AI Assistant can help if you're stuck!" 
+                                value={content} 
+                                onChange={(e) => setContent(e.target.value)}
+                                rows={8}
+                                required
+                            />
+                            <div className="grid md:grid-cols-2 gap-6">
+                                <div className="space-y-2">
+                                    <label className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2"><Calendar size={14}/> Publish Date & Time</label>
+                                    <input 
+                                        type="datetime-local" 
+                                        value={scheduleTime}
+                                        onChange={(e) => setScheduleTime(e.target.value)}
+                                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                                        required
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2"><PlusCircle size={14}/> Media Attachments</label>
+                                    <div className="h-[50px] border border-dashed border-slate-700 rounded-xl flex items-center justify-center text-slate-500 text-xs italic hover:border-indigo-500 transition-colors cursor-pointer">
+                                        Click to browse Supabase Storage
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="pt-4 flex gap-4">
+                                <Button type="submit" isLoading={isSubmitting} className="flex-1 !py-4 font-bold text-lg"><Send size={20} /> Schedule Post</Button>
+                                <Button variant="secondary" type="button" className="!py-4">Save as Draft</Button>
+                            </div>
+                        </form>
+                    </Card>
+
+                    <Card className="bg-slate-900/40 border-white/5 flex flex-col items-center justify-center p-8 text-center">
+                        <div className="w-16 h-16 bg-pink-500/10 rounded-3xl flex items-center justify-center mb-6 text-pink-500">
+                            <Sparkles size={32} />
+                        </div>
+                        <h3 className="text-xl font-bold text-white mb-2">Need a script?</h3>
+                        <p className="text-slate-500 mb-6 text-sm">Our AI Content Studio can generate viral-ready scripts for your social platforms in seconds.</p>
+                        <Button onClick={() => setView(AppView.DASHBOARD_CONTENT)} variant="secondary" className="w-full">Open Studio</Button>
+                    </Card>
+                </div>
+            )}
+
+            {activeTab === 'scheduled' && (
+                <Card className="animate-fade-in !p-0 overflow-hidden border-white/5 bg-slate-900/40">
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left">
+                            <thead>
+                                <tr className="bg-slate-800/50 border-b border-white/5">
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400">Platform</th>
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400">Content Preview</th>
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400">Scheduled Time</th>
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400">Status</th>
+                                    <th className="px-6 py-4 text-[10px] font-black uppercase text-slate-400 text-right">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-white/5">
+                                {scheduledPosts.length === 0 ? (
+                                    <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-500 italic">No scheduled posts found. Try creating one!</td></tr>
+                                ) : (
+                                    scheduledPosts.map(post => (
+                                        <tr key={post.id} className="hover:bg-white/[0.02] transition-colors group">
+                                            <td className="px-6 py-4">
+                                                <div className="flex items-center gap-2">
+                                                    {getPlatformIcon(post.social_accounts?.platform || '')}
+                                                    <span className="text-xs font-bold text-white">{post.social_accounts?.platform.toUpperCase()}</span>
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <div className="text-xs text-slate-300 line-clamp-1 max-w-xs">{post.content}</div>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <div className="flex items-center gap-2 text-slate-400 text-xs">
+                                                    <Clock size={12} />
+                                                    {new Date(post.scheduled_at).toLocaleString()}
+                                                </div>
+                                            </td>
+                                            <td className="px-6 py-4">
+                                                <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest ${
+                                                    post.status === 'published' ? 'bg-green-500/20 text-green-400' : 
+                                                    post.status === 'failed' ? 'bg-red-500/20 text-red-400' : 
+                                                    'bg-yellow-500/20 text-yellow-400'
+                                                }`}>
+                                                    {post.status}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 text-right">
+                                                <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <button className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors"><PenLine size={14}/></button>
+                                                    <button className="p-2 bg-slate-800 hover:bg-red-500/20 text-slate-400 hover:text-red-400 rounded-lg transition-colors"><Trash2 size={14}/></button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </Card>
+            )}
+
+            {activeTab === 'logs' && (
+                <div className="space-y-4 animate-fade-in">
+                    {logs.length === 0 ? (
+                        <div className="text-center py-20 bg-slate-900/50 rounded-[40px] border border-dashed border-white/5">
+                            <LogsIcon size={48} className="text-slate-700 mx-auto mb-4" />
+                            <p className="text-slate-500">No publish logs recorded yet.</p>
+                        </div>
+                    ) : (
+                        logs.map(log => (
+                            <Card key={log.id} className="flex flex-col md:flex-row md:items-center justify-between gap-6 hover:border-indigo-500/20 transition-all border-white/5">
+                                <div className="flex-1">
+                                    <div className="flex items-center gap-3 mb-2">
+                                        <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest ${log.status === 'published' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                                            {log.status}
+                                        </span>
+                                        <span className="text-xs text-slate-500">{new Date(log.created_at).toLocaleString()}</span>
+                                    </div>
+                                    <p className="text-sm text-slate-300 line-clamp-2 italic">"{log.social_posts?.content}"</p>
+                                    {log.error_details && <p className="mt-2 text-xs text-red-400 bg-red-400/10 p-2 rounded-lg border border-red-400/20">Error: {log.error_details}</p>}
+                                </div>
+                                <div className="flex items-center gap-3 shrink-0">
+                                    {log.social_posts?.platform_post_url && (
+                                        <a href={log.social_posts.platform_post_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-xs font-bold text-white transition-all border border-slate-700">
+                                            <ExternalLink size={14} /> View Post
+                                        </a>
+                                    )}
+                                    {/* Info icon is used here */}
+                                    <Button variant="ghost" className="text-xs !px-4"><Info size={14} className="mr-2"/> Details</Button>
+                                </div>
+                            </Card>
+                        ))
+                    )}
+                </div>
+            )}
+        </div>
+    );
+  };
+
+  const ContactView = () => {
+    const [name, setName] = useState(profile?.name || '');
+    const [email, setEmail] = useState(user?.email || '');
+    const [message, setMessage] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [success, setSuccess] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const handleSend = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setLoading(true);
+        setError(null);
+        setSuccess(false);
+
+        try {
+            // Updated EmailJS Configuration
+            const serviceId = 'service_pkikx6r';
+            const templateId = 'template_m6vclf4';
+            const publicKey = 'N8Yfos_5H5tNpRdiR';
+
+            const templateParams = {
+                name: name,
+                email: email,
+                message: message,
+                time: new Date().toLocaleString(),
+                year: new Date().getFullYear().toString()
+            };
+
+            const response = await emailjs.send(serviceId, templateId, templateParams, publicKey);
+            
+            if (response.status === 200) {
+                setSuccess(true);
+                setMessage('');
+            } else {
+                throw new Error("Failed to send email.");
+            }
+        } catch (err: any) {
+            console.error("EmailJS Error:", err);
+            setError(err.text || err.message || "Could not send message. Please ensure your EmailJS credentials are valid.");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="max-w-2xl mx-auto space-y-6 animate-fade-in">
+            <header className="text-center mb-8">
+                <div className="w-16 h-16 bg-amber-500/20 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-amber-500/20">
+                    <Mail className="text-amber-400" size={32} />
+                </div>
+                <h2 className="text-3xl font-bold text-white mb-2">Get in Touch</h2>
+                <p className="text-slate-400">Have questions or feedback? Our team is here to help.</p>
+            </header>
+
+            <Card className="!bg-slate-900/40 border-white/5 shadow-2xl relative overflow-hidden">
+                {success && (
+                    <div className="absolute inset-0 z-20 bg-[#020617]/90 backdrop-blur-md flex flex-col items-center justify-center text-center p-8 animate-fade-in">
+                        <div className="w-20 h-20 bg-green-500/20 rounded-full flex items-center justify-center mb-6 border border-green-500/30">
+                            <CheckCircle className="text-green-400" size={40} />
+                        </div>
+                        <h3 className="text-2xl font-bold text-white mb-2">Message Sent!</h3>
+                        <p className="text-slate-400 mb-8 max-w-sm">Thank you for reaching out, {name.split(' ')[0]}. We've received your message and will get back to you soon.</p>
+                        <Button onClick={() => setSuccess(false)} variant="secondary">Send Another Message</Button>
+                    </div>
+                )}
+
+                <form onSubmit={handleSend} className="space-y-6">
+                    <div className="grid sm:grid-cols-2 gap-4">
+                        <Input 
+                            label="Full Name" 
+                            placeholder="Your Name" 
+                            value={name} 
+                            onChange={(e) => setName(e.target.value)} 
+                            required 
+                            disabled={loading}
+                        />
+                        <Input 
+                            label="Email Address" 
+                            type="email" 
+                            placeholder="you@example.com" 
+                            value={email} 
+                            onChange={(e) => setEmail(e.target.value)} 
+                            required 
+                            disabled={loading}
+                        />
+                    </div>
+                    <TextArea 
+                        label="Message" 
+                        placeholder="Tell us what's on your mind..." 
+                        rows={6} 
+                        value={message} 
+                        onChange={(e) => setMessage(e.target.value)} 
+                        required 
+                        disabled={loading}
+                    />
+                    
+                    {error && (
+                        <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-3 text-red-400 text-sm">
+                            <AlertTriangle size={18} />
+                            <span>{error}</span>
+                        </div>
+                    )}
+
+                    <Button type="submit" isLoading={loading} className="w-full !py-4 font-bold text-lg shadow-amber-500/10">
+                        {loading ? 'Sending...' : 'Send Message'}
+                        <Send size={20} className="ml-2" />
+                    </Button>
+                </form>
+            </Card>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="p-4 rounded-2xl bg-slate-900/50 border border-white/5 text-center">
+                    <div className="text-indigo-400 font-bold mb-1">Email</div>
+                    <div className="text-sm text-slate-500">support@speakcoaching.ai</div>
+                </div>
+                <div className="p-4 rounded-2xl bg-slate-900/50 border border-white/5 text-center">
+                    <div className="text-purple-400 font-bold mb-1">Response Time</div>
+                    <div className="text-sm text-slate-500">Within 24 hours</div>
+                </div>
+                <div className="p-4 rounded-2xl bg-slate-900/50 border border-white/5 text-center">
+                    <div className="text-emerald-400 font-bold mb-1">Active Hours</div>
+                    <div className="text-sm text-slate-500">Mon-Fri, 9am - 5pm</div>
+                </div>
+            </div>
+        </div>
+    );
+  };
+
   const HomeView = () => (
     <div className="space-y-6 animate-fade-in">
       <header className="mb-8">
@@ -328,9 +762,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
           <Button onClick={() => setView(AppView.DASHBOARD_COACHING)} variant="secondary" className="w-full">Start Practice</Button>
         </Card>
         <Card className="bg-gradient-to-br from-blue-900/40 to-slate-800/40 border-blue-500/20 group hover:border-blue-500/40 transition-all">
-          <h3 className="text-lg font-semibold text-white mb-2">Landing Builder</h3>
-          <p className="text-sm text-slate-400 mb-4">Generate and deploy website landing pages.</p>
-          <Button onClick={() => setView(AppView.DASHBOARD_LANDING_BUILDER)} variant="secondary" className="w-full">Create Page</Button>
+          <h3 className="text-lg font-semibold text-white mb-2">Social Scheduler</h3>
+          <p className="text-sm text-slate-400 mb-4">Plan and publish your content across all socials.</p>
+          <Button onClick={() => setView(AppView.DASHBOARD_SOCIAL)} variant="secondary" className="w-full">Open Scheduler</Button>
         </Card>
       </div>
       <div className="mt-8"><h3 className="text-xl font-semibold text-white mb-4">Recent Activity</h3><HistoryView limit={3} /></div>
@@ -631,7 +1065,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
                             <span className="text-xs font-bold uppercase text-slate-400">{selectedPage?.is_published ? 'Live' : 'Draft'}</span>
                         </div>
                         <button onClick={() => handleSave(false)} disabled={saving} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold bg-slate-800 hover:bg-slate-700 text-white border border-slate-700"><Save size={16}/> Save Draft</button>
-                        <Button onClick={() => handleSave(true)} isLoading={saving} className="!bg-indigo-600 hover:!bg-indigo-500 !py-2 !px-6 !text-sm !font-bold shadow-xl shadow-indigo-600/20"><Globe size={18} /> Publish Live</Button>
+                        <Button onClick={() => handleSave(true)} isLoading={saving} className="!bg-indigo-600 hover:!bg-indigo-500 !py-2 !px-6 !text-sm !font-bold shadow-xl shadow-indigo-600/20"><Globe size={18} /> Publish Live</button>
                     </div>
                 )}
             </div>
@@ -788,6 +1222,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
           {currentView === AppView.DASHBOARD_CHATBOT && <ChatbotView />}
           {currentView === AppView.DASHBOARD_HISTORY && <div className="max-w-4xl mx-auto animate-fade-in"><h2 className="text-3xl font-bold mb-8 text-white">Activity Logs</h2><HistoryView /></div>}
           {currentView === AppView.DASHBOARD_PROFILE && <ProfileView />}
+          {currentView === AppView.DASHBOARD_CONTACT && <ContactView />}
+          {currentView === AppView.DASHBOARD_SOCIAL && <SocialSchedulerView />}
         </main>
       </div>
     </div>

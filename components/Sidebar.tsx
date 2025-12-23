@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { LayoutDashboard, PenTool, Mic, History, User, LogOut, X, Loader2, Globe, MessageSquare, Sparkles } from 'lucide-react';
+import { LayoutDashboard, PenTool, Mic, History, User, LogOut, X, Loader2, Globe, MessageSquare, Sparkles, Mail, Share2 } from 'lucide-react';
 import { AppView } from '../types';
 
 interface SidebarProps {
@@ -19,9 +19,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, onLogout
     { view: AppView.DASHBOARD_CHATBOT, label: 'AI Assistant', icon: MessageSquare, color: 'from-green-400 to-emerald-600' },
     { view: AppView.DASHBOARD_CONTENT, label: 'Content Studio', icon: PenTool, color: 'from-purple-500 to-pink-500' },
     { view: AppView.DASHBOARD_COACHING, label: 'Speak Coaching', icon: Mic, color: 'from-orange-400 to-red-500' },
+    { view: AppView.DASHBOARD_SOCIAL, label: 'Social Scheduler', icon: Share2, color: 'from-pink-500 to-rose-600' },
     { view: AppView.DASHBOARD_LANDING_BUILDER, label: 'Landing Builder', icon: Globe, color: 'from-cyan-400 to-blue-600' },
     { view: AppView.DASHBOARD_HISTORY, label: 'History', icon: History, color: 'from-slate-400 to-slate-600' },
     { view: AppView.DASHBOARD_PROFILE, label: 'Profile', icon: User, color: 'from-indigo-400 to-purple-500' },
+    { view: AppView.DASHBOARD_CONTACT, label: 'Contact Support', icon: Mail, color: 'from-amber-400 to-orange-500' },
   ];
 
   const handleLogout = async () => {
