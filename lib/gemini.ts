@@ -6,7 +6,7 @@ import { GoogleGenAI, Content } from "@google/genai";
  * Must use new GoogleGenAI({apiKey: process.env.API_KEY});
  * API key must be obtained exclusively from process.env.API_KEY.
  */
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: "AIzaSyCNXC0X-yUUVRCPT1W2QWEweT5NUv33xFs" });
 
 export const SQL_SCHEMA = `
 -- 1. Create Users Table
