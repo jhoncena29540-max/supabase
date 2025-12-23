@@ -10,8 +10,8 @@ import { HashRouter, useLocation } from 'react-router-dom';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
 // Production-ready Error Boundary
-class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean, error: Error | null }> {
-  constructor(props: { children: ReactNode }) {
+class ErrorBoundary extends React.Component<{ children?: ReactNode }, { hasError: boolean, error: Error | null }> {
+  constructor(props: { children?: ReactNode }) {
     super(props);
     this.state = { hasError: false, error: null };
   }
