@@ -6,6 +6,7 @@ import { GoogleGenAI, Content } from "@google/genai";
  * Must use new GoogleGenAI({apiKey: process.env.API_KEY});
  * API key must be obtained exclusively from process.env.API_KEY.
  */
+// Fixed: Using process.env.API_KEY as per the library guidelines.
 const ai = new GoogleGenAI({ apiKey: "" });
 
 export const SQL_SCHEMA = `

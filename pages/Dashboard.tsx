@@ -3,7 +3,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { Sidebar } from '../components/Sidebar';
 import { AppView, UserProfile } from '../types';
-// Added missing 'X' icon to the imports list
 import { 
   Menu, Bell, Sparkles, Trash2, ChevronDown, Loader2, AlertTriangle, 
   ExternalLink, Send, Bot, User, Share2, Youtube, Instagram, Facebook, 
@@ -227,14 +226,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
     useEffect(() => {
       fetchData();
       
-      // Handle OAuth callback success state
       const params = new URLSearchParams(window.location.search);
       if (params.get('auth_success') === 'true') {
         setAuthSuccess(true);
-        // Clean up URL parameters without refreshing
         const newUrl = window.location.origin + window.location.pathname + window.location.hash;
         window.history.replaceState({}, document.title, newUrl);
-        // Briefly show success before fading out
         setTimeout(() => setAuthSuccess(false), 5000);
       }
     }, []);
@@ -250,17 +246,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
     };
 
     /**
-     * WIRING: Connects to 'bright-responder' Edge Function.
-     * This function initiates the Google OAuth flow.
+     * UPDATED: Connects to 'bright-responder' Edge Function.
      */
     const handleConnect = (platform: string) => {
-      // The redirect_uri is where the user returns AFTER the callback (quick-endpoint) completes.
       const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname + window.location.hash);
       
-      // SECURE WIRING: Using the existing bright-responder mapping
+      // Points to bright-responder (START)
       const funcUrl = `https://hckjalcigpjdqcqhglhl.supabase.co/functions/v1/bright-responder?platform=${platform}&user_id=${user.id}&redirect_uri=${redirectUri}`;
       
-      // Perform standard location redirect
       window.location.href = funcUrl;
     };
 
@@ -383,7 +376,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
                     <Clock size={18} className="text-slate-500" /> Content Queue
                   </h3>
                </div>
-               <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar p-4">
+               <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
                   {posts.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-center opacity-40 py-20">
                       <Clock size={40} className="mb-4" />
