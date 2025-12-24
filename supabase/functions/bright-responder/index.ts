@@ -1,7 +1,6 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 
-// Fixed: Declaring Deno to resolve compilation errors in non-Deno environments
 declare const Deno: any;
 
 const corsHeaders = {
@@ -11,7 +10,7 @@ const corsHeaders = {
 
 /**
  * bright-responder: OAuth START
- * This function is public (verifyJwt: false) to allow browser redirects.
+ * This function handles the initial redirect from the browser.
  */
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
@@ -20,16 +19,18 @@ serve(async (req) => {
   const platform = url.searchParams.get('platform')
   const userId = url.searchParams.get('user_id')
   const redirectUriParam = url.searchParams.get('redirect_uri')
+  const apikey = url.searchParams.get('apikey') 
 
   const GOOGLE_CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID')
   
-  // The callback URL MUST point to your quick-endpoint
-  const CALLBACK_URL = "https://hckjalcigpjdqcqhglhl.supabase.co/functions/v1/quick-endpoint"
+  // FIX: The redirect_uri registered in Google MUST include the apikey 
+  // so that the Supabase Gateway allows the return request.
+  const CALLBACK_URL = `https://hckjalcigpjdqcqhglhl.supabase.co/functions/v1/quick-endpoint?apikey=${apikey}`
 
-  if (platform === 'youtube' && userId) {
+  if (platform === 'youtube' && userId && apikey) {
     const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth')
     authUrl.searchParams.set('client_id', GOOGLE_CLIENT_ID!)
-    authUrl.searchParams.set('redirect_uri', CALLBACK_URL)
+    authUrl.searchParams.set('redirect_uri', CALLBACK_URL) 
     authUrl.searchParams.set('response_type', 'code')
     authUrl.searchParams.set('access_type', 'offline')
     authUrl.searchParams.set('prompt', 'consent')
@@ -39,11 +40,12 @@ serve(async (req) => {
       'https://www.googleapis.com/auth/userinfo.profile'
     ].join(' '))
     
-    // Pass context through state to the callback
+    // Pass context through state.
     const statePayload = btoa(JSON.stringify({
       userId,
       platform: 'youtube',
-      origRedirect: redirectUriParam
+      origRedirect: redirectUriParam,
+      apikey: apikey 
     }))
     authUrl.searchParams.set('state', statePayload)
 
@@ -54,4 +56,4 @@ serve(async (req) => {
     status: 400, 
     headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
   })
-}, { verifyJwt: false }) // CRITICAL: Allows browser redirects
+}, { verifyJwt: false })
