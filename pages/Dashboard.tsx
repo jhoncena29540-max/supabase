@@ -3,17 +3,18 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { Sidebar } from '../components/Sidebar';
 import { AppView, UserProfile } from '../types';
+// Added missing 'X' icon to the imports list
 import { 
   Menu, Bell, Sparkles, Trash2, ChevronDown, Loader2, AlertTriangle, 
   ExternalLink, Send, Bot, User, Share2, Youtube, Instagram, Facebook, 
-  Music2, Calendar, Clock, PlusCircle, PenLine, Info, History as LogsIcon,
-  Mic, Radio, Power, AudioLines, ShieldCheck
+  Music2, Calendar, Clock, PlusCircle, PenLine, Info, History as HistoryIcon,
+  Mic, Radio, Power, AudioLines, ShieldCheck, CheckCircle2, AlertCircle, TrendingUp,
+  X
 } from 'lucide-react';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Input, TextArea } from '../components/Input';
 import { generateContentScript, generateCoachingAdvice, getChatResponse } from '../lib/gemini';
-// Fix: Added 'Content' to imports to support the messages state type in ChatbotView
 import { GoogleGenAI, LiveServerMessage, Modality, Type, FunctionDeclaration, Content } from "@google/genai";
 
 interface DashboardProps {
@@ -21,7 +22,7 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
-// Utility functions for Audio Processing (as per GenAI SDK requirements)
+// Utility functions for Audio Processing
 function encode(bytes: Uint8Array) {
   let binary = '';
   const len = bytes.byteLength;
@@ -73,235 +74,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
     fetchProfile();
   }, [user]);
 
-  // --- LIVE COACHING VIEW ---
-  const LiveCoachingView = () => {
-    const [isActive, setIsActive] = useState(false);
-    const [transcription, setTranscription] = useState<string[]>([]);
-    const [liveNotes, setLiveNotes] = useState<{note: string, category: string}[]>([]);
-    const [isConnecting, setIsConnecting] = useState(false);
-    
-    const sessionRef = useRef<any>(null);
-    const inputAudioCtxRef = useRef<AudioContext | null>(null);
-    const outputAudioCtxRef = useRef<AudioContext | null>(null);
-    const nextStartTimeRef = useRef(0);
-    const sourcesRef = useRef(new Set<AudioBufferSourceNode>());
-
-    const startSession = async () => {
-      setIsConnecting(true);
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      
-      // Define the "Function" we want to connect to our app
-      const saveNoteFunction: FunctionDeclaration = {
-        name: 'saveLiveCoachingNote',
-        parameters: {
-          type: Type.OBJECT,
-          description: 'Save a coaching observation or note during a live session.',
-          properties: {
-            note: { type: Type.STRING, description: 'The text of the coaching note.' },
-            category: { type: Type.STRING, description: 'Category: Pace, Tone, Clarity, or Confidence.' },
-          },
-          required: ['note', 'category'],
-        },
-      };
-
-      inputAudioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      outputAudioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-      const sessionPromise = ai.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
-        callbacks: {
-          onopen: () => {
-            setIsActive(true);
-            setIsConnecting(false);
-            const source = inputAudioCtxRef.current!.createMediaStreamSource(stream);
-            const scriptProcessor = inputAudioCtxRef.current!.createScriptProcessor(4096, 1, 1);
-            
-            scriptProcessor.onaudioprocess = (e) => {
-              const inputData = e.inputBuffer.getChannelData(0);
-              const int16 = new Int16Array(inputData.length);
-              for (let i = 0; i < inputData.length; i++) int16[i] = inputData[i] * 32768;
-              
-              sessionPromise.then(session => {
-                session.sendRealtimeInput({
-                  media: { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' }
-                });
-              });
-            };
-            source.connect(scriptProcessor);
-            scriptProcessor.connect(inputAudioCtxRef.current!.destination);
-          },
-          onmessage: async (message: LiveServerMessage) => {
-            // Handle Tool/Function Calls
-            if (message.toolCall) {
-              for (const fc of message.toolCall.functionCalls) {
-                if (fc.name === 'saveLiveCoachingNote') {
-                  const { note, category } = fc.args as any;
-                  setLiveNotes(prev => [{ note, category }, ...prev]);
-                  
-                  // Connect to Backend (Supabase)
-                  await supabase.from('ai_requests').insert({
-                    user_id: user.id,
-                    request_type: 'live_note',
-                    prompt: `Live Coaching Category: ${category}`,
-                    response: note
-                  });
-
-                  sessionPromise.then(s => s.sendToolResponse({
-                    functionResponses: { id: fc.id, name: fc.name, response: { result: "Note saved successfully" } }
-                  }));
-                }
-              }
-            }
-
-            // Handle Audio
-            const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-            if (audioData && outputAudioCtxRef.current) {
-              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputAudioCtxRef.current.currentTime);
-              const buffer = await decodeAudioData(decode(audioData), outputAudioCtxRef.current, 24000, 1);
-              const source = outputAudioCtxRef.current.createBufferSource();
-              source.buffer = buffer;
-              source.connect(outputAudioCtxRef.current.destination);
-              source.start(nextStartTimeRef.current);
-              nextStartTimeRef.current += buffer.duration;
-              sourcesRef.current.add(source);
-              source.onended = () => sourcesRef.current.delete(source);
-            }
-
-            // Handle Transcription
-            if (message.serverContent?.outputTranscription) {
-               const text = message.serverContent.outputTranscription.text;
-               setTranscription(prev => [...prev.slice(-4), text]);
-            }
-          },
-          onclose: () => stopSession(),
-          onerror: (e) => { console.error(e); stopSession(); }
-        },
-        config: {
-          responseModalities: [Modality.AUDIO],
-          systemInstruction: 'You are an elite speech coach. Listen to the user talk. Provide short, constructive verbal feedback. If you notice a specific habit (filler words, too fast, great energy), use the saveLiveCoachingNote function to record it.',
-          tools: [{ functionDeclarations: [saveNoteFunction] }],
-          outputAudioTranscription: {},
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } }
-        }
-      });
-
-      sessionRef.current = await sessionPromise;
-    };
-
-    const stopSession = () => {
-      setIsActive(false);
-      setIsConnecting(false);
-      sessionRef.current?.close();
-      inputAudioCtxRef.current?.close();
-      outputAudioCtxRef.current?.close();
-      sourcesRef.current.forEach(s => s.stop());
-      sourcesRef.current.clear();
-    };
-
-    return (
-      <div className="max-w-6xl mx-auto space-y-8 animate-fade-in">
-        <header className="flex justify-between items-center">
-          <div className="space-y-1">
-            <h2 className="text-4xl font-black text-white flex items-center gap-4">
-              <div className="p-3 rounded-2xl bg-rose-500/20 text-rose-400 shadow-lg shadow-rose-500/10">
-                <Radio size={32} />
-              </div>
-              Live Studio
-            </h2>
-            <p className="text-slate-500 font-medium ml-1">Real-time verbal coaching with automatic milestone logging.</p>
-          </div>
-          <Button 
-            onClick={isActive ? stopSession : startSession} 
-            variant={isActive ? 'danger' : 'primary'}
-            isLoading={isConnecting}
-            className="!px-10 !py-5 text-lg font-black rounded-3xl shadow-2xl"
-          >
-            {isActive ? <Power size={20} className="mr-2" /> : <Sparkles size={20} className="mr-2" />}
-            {isActive ? 'End Session' : 'Start Session'}
-          </Button>
-        </header>
-
-        <div className="grid lg:grid-cols-3 gap-8 h-[600px]">
-          {/* Main Visualizer */}
-          <Card className="lg:col-span-2 flex flex-col items-center justify-center relative overflow-hidden bg-slate-900/40 border-white/5">
-            {!isActive && !isConnecting && (
-              <div className="text-center space-y-4 max-w-sm">
-                <div className="w-24 h-24 bg-slate-800 rounded-full flex items-center justify-center mx-auto border border-white/5">
-                  <Mic size={40} className="text-slate-600" />
-                </div>
-                <h3 className="text-xl font-bold text-slate-400">Ready to speak?</h3>
-                <p className="text-sm text-slate-500">Enable your microphone to start a conversational coaching session with SpeakCoaching AI.</p>
-              </div>
-            )}
-
-            {(isActive || isConnecting) && (
-              <div className="flex flex-col items-center gap-12 w-full">
-                {/* Voice Orb */}
-                <div className="relative">
-                  <div className={`absolute inset-0 bg-indigo-500/30 blur-[60px] rounded-full transition-all duration-300 ${isActive ? 'scale-125 animate-pulse' : 'scale-0'}`}></div>
-                  <div className={`w-48 h-48 rounded-full border-4 border-white/10 flex items-center justify-center bg-slate-900 relative z-10 overflow-hidden shadow-2xl`}>
-                     <AudioLines className={`text-indigo-400 w-20 h-20 transition-all duration-500 ${isActive ? 'scale-110 rotate-12' : 'scale-50 opacity-20'}`} />
-                  </div>
-                </div>
-
-                <div className="text-center space-y-4 w-full px-12">
-                   <p className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-400 animate-pulse">Live Transcription Feed</p>
-                   <div className="h-24 flex flex-col justify-center items-center gap-2">
-                     {transcription.map((t, i) => (
-                       <p key={i} className={`text-sm font-medium transition-all duration-700 ${i === transcription.length - 1 ? 'text-white scale-105' : 'text-slate-500 opacity-50 text-xs'}`}>{t}</p>
-                     ))}
-                   </div>
-                </div>
-              </div>
-            )}
-          </Card>
-
-          {/* AI Log (Connected Function Data) */}
-          <Card className="bg-slate-800/20 flex flex-col border-white/5 shadow-2xl">
-             <div className="flex items-center gap-3 mb-6 p-2">
-                <div className="w-10 h-10 rounded-xl bg-indigo-500/20 flex items-center justify-center text-indigo-400">
-                   <ShieldCheck size={20} />
-                </div>
-                <div>
-                   <h4 className="text-sm font-black text-white uppercase tracking-wider">Session Analytics</h4>
-                   <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Real-time function calls</p>
-                </div>
-             </div>
-
-             <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-2">
-                {liveNotes.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center p-8 space-y-4">
-                    <LogsIcon size={40} className="text-slate-800" />
-                    <p className="text-xs text-slate-600 font-bold uppercase tracking-widest">No notes yet.<br/>Speak to trigger analysis.</p>
-                  </div>
-                ) : (
-                  liveNotes.map((note, i) => (
-                    <div key={i} className="p-4 rounded-2xl bg-indigo-500/5 border border-indigo-500/10 animate-slide-up">
-                       <div className="flex justify-between items-center mb-2">
-                          <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">{note.category}</span>
-                          <div className="w-2 h-2 rounded-full bg-indigo-500 animate-ping"></div>
-                       </div>
-                       <p className="text-xs text-slate-300 font-medium leading-relaxed italic">"{note.note}"</p>
-                    </div>
-                  ))
-                )}
-             </div>
-
-             <div className="mt-6 pt-6 border-t border-white/5">
-                <div className="flex items-center justify-between text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">
-                   <span>Auto-Synced to DB</span>
-                   <span className="text-emerald-400 flex items-center gap-1"><div className="w-1.5 h-1.5 rounded-full bg-emerald-400"></div> Connected</span>
-                </div>
-             </div>
-          </Card>
-        </div>
-      </div>
-    );
-  };
-
-  // --- VIEWS ---
+  // --- SUB-VIEW COMPONENTS ---
 
   const HomeView = () => (
     <div className="space-y-6 animate-fade-in">
@@ -440,6 +213,345 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
     );
   };
 
+  const SocialSchedulerView = () => {
+    const [accounts, setAccounts] = useState<any[]>([]);
+    const [posts, setPosts] = useState<any[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isScheduling, setIsScheduling] = useState(false);
+    const [postContent, setPostContent] = useState('');
+    const [scheduleDate, setScheduleDate] = useState('');
+    const [selectedAccount, setSelectedAccount] = useState<string>('');
+    const [aiSuggesting, setAiSuggesting] = useState(false);
+    const [authSuccess, setAuthSuccess] = useState(false);
+
+    useEffect(() => {
+      fetchData();
+      
+      // Handle OAuth callback success state
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('auth_success') === 'true') {
+        setAuthSuccess(true);
+        // Clean up URL parameters without refreshing
+        const newUrl = window.location.origin + window.location.pathname + window.location.hash;
+        window.history.replaceState({}, document.title, newUrl);
+        // Briefly show success before fading out
+        setTimeout(() => setAuthSuccess(false), 5000);
+      }
+    }, []);
+
+    const fetchData = async () => {
+      setIsLoading(true);
+      try {
+        const { data: accData } = await supabase.from('social_accounts').select('*').eq('user_id', user.id);
+        const { data: postData } = await supabase.from('social_posts').select('*, social_accounts(account_name, platform)').eq('user_id', user.id).order('scheduled_at', { ascending: false });
+        setAccounts(accData || []);
+        setPosts(postData || []);
+      } finally { setIsLoading(false); }
+    };
+
+    /**
+     * WIRING: Connects to 'bright-responder' Edge Function.
+     * This function initiates the Google OAuth flow.
+     */
+    const handleConnect = (platform: string) => {
+      // The redirect_uri is where the user returns AFTER the callback (quick-endpoint) completes.
+      const redirectUri = encodeURIComponent(window.location.origin + window.location.pathname + window.location.hash);
+      
+      // SECURE WIRING: Using the existing bright-responder mapping
+      const funcUrl = `https://hckjalcigpjdqcqhglhl.supabase.co/functions/v1/bright-responder?platform=${platform}&user_id=${user.id}&redirect_uri=${redirectUri}`;
+      
+      // Perform standard location redirect
+      window.location.href = funcUrl;
+    };
+
+    const handleSchedule = async () => {
+      if (!postContent || !scheduleDate || !selectedAccount) return;
+      setIsScheduling(true);
+      try {
+        const { error } = await supabase.from('social_posts').insert({
+          user_id: user.id,
+          account_id: selectedAccount,
+          content: postContent,
+          scheduled_at: new Date(scheduleDate).toISOString(),
+          status: 'scheduled'
+        });
+        if (!error) { setPostContent(''); setScheduleDate(''); fetchData(); }
+      } finally { setIsScheduling(false); }
+    };
+
+    const handleAiRefine = async () => {
+      if (!postContent) return;
+      setAiSuggesting(true);
+      try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const res = await ai.models.generateContent({
+          model: 'gemini-3-flash-preview',
+          contents: `Rewrite this content to be highly engaging for social media. Include hooks and relevant hashtags: "${postContent}"`
+        });
+        setPostContent(res.text || '');
+      } finally { setAiSuggesting(false); }
+    };
+
+    return (
+      <div className="max-w-6xl mx-auto space-y-8 animate-fade-in pb-12">
+        {authSuccess && (
+          <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-4 rounded-2xl flex items-center justify-between animate-slide-down">
+            <div className="flex items-center gap-3">
+              <CheckCircle2 size={20} />
+              <p className="text-sm font-bold uppercase tracking-widest">YouTube Connected Successfully!</p>
+            </div>
+            <button onClick={() => setAuthSuccess(false)}><X size={16} /></button>
+          </div>
+        )}
+
+        <header className="flex justify-between items-end">
+          <div className="space-y-1">
+            <h2 className="text-4xl font-black text-white flex items-center gap-4">
+              <div className="p-3 rounded-2xl bg-indigo-500/20 text-indigo-400 shadow-lg shadow-indigo-500/10">
+                <Share2 size={32} />
+              </div>
+              Social Suite
+            </h2>
+            <p className="text-slate-500 font-medium ml-1">Connect, compose, and automate your online presence.</p>
+          </div>
+          <div className="flex gap-3">
+            <Button variant="secondary" onClick={() => fetchData()} className="!p-3"><HistoryIcon size={20} /></Button>
+            <Button variant="primary" onClick={() => handleConnect('youtube')} className="!px-6">
+              <Youtube size={18} className="mr-2" /> Connect YouTube
+            </Button>
+          </div>
+        </header>
+
+        <div className="grid lg:grid-cols-12 gap-8">
+          <div className="lg:col-span-7 space-y-8">
+            <div className="grid grid-cols-2 gap-4">
+              {accounts.length === 0 ? (
+                <Card className="col-span-2 border-dashed border-white/10 flex flex-col items-center justify-center py-10 text-center">
+                  <Info className="text-slate-600 mb-2" size={32} />
+                  <p className="text-sm font-bold text-slate-500 uppercase tracking-widest">No accounts linked</p>
+                </Card>
+              ) : (
+                accounts.map((acc) => (
+                  <Card key={acc.id} className="relative overflow-hidden group border-white/5 bg-slate-900/40">
+                    <div className="flex items-start justify-between relative z-10">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${acc.platform === 'youtube' ? 'bg-red-500/20 text-red-500' : 'bg-blue-500/20 text-blue-500'}`}>
+                          {acc.platform === 'youtube' ? <Youtube size={24} /> : <Facebook size={24} />}
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-white leading-none">{acc.account_name}</p>
+                          <p className="text-[10px] text-slate-500 uppercase tracking-widest font-black mt-1">@{acc.username}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+                ))
+              )}
+            </div>
+            <Card className="bg-slate-900/60 border-white/5 shadow-2xl space-y-6">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <PenLine className="text-indigo-400" size={20} /> New Post
+                </h3>
+                <Button variant="ghost" onClick={handleAiRefine} isLoading={aiSuggesting} className="!text-xs uppercase tracking-widest font-black !py-1 !px-3 border border-indigo-500/20 text-indigo-400">
+                  <Sparkles size={14} className="mr-1" /> Refine with AI
+                </Button>
+              </div>
+              <div className="space-y-4">
+                <TextArea label="Content" value={postContent} onChange={(e) => setPostContent(e.target.value)} rows={6} />
+                <Input label="Schedule Time" type="datetime-local" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} />
+                <div className="flex gap-4">
+                  <select 
+                    value={selectedAccount}
+                    onChange={(e) => setSelectedAccount(e.target.value)}
+                    className="w-full bg-slate-950 border border-white/5 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                  >
+                    <option value="">Target Account...</option>
+                    {accounts.map(a => <option key={a.id} value={a.id}>{a.account_name} ({a.platform})</option>)}
+                  </select>
+                  <Button onClick={handleSchedule} isLoading={isScheduling} disabled={!postContent || !scheduleDate || !selectedAccount} className="w-full !py-3 font-black uppercase tracking-widest">
+                    <Calendar size={18} className="mr-2" /> Schedule Post
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          </div>
+          <div className="lg:col-span-5">
+            <Card className="h-[730px] flex flex-col border-white/5 bg-slate-900/20 backdrop-blur-none p-0">
+               <div className="p-6 border-b border-white/5">
+                  <h3 className="text-sm font-black text-white uppercase tracking-widest flex items-center gap-2">
+                    <Clock size={18} className="text-slate-500" /> Content Queue
+                  </h3>
+               </div>
+               <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar p-4">
+                  {posts.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center opacity-40 py-20">
+                      <Clock size={40} className="mb-4" />
+                      <p className="text-xs font-bold uppercase tracking-widest">No scheduled posts</p>
+                    </div>
+                  ) : posts.map((post) => (
+                    <div key={post.id} className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-3">
+                      <div className="flex justify-between items-start">
+                         <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${post.status === 'published' ? 'border-emerald-500/20 text-emerald-400 bg-emerald-500/5' : 'border-indigo-500/20 text-indigo-400 bg-indigo-500/5'}`}>
+                           {post.status}
+                         </span>
+                         <span className="text-[9px] font-bold text-slate-500">{new Date(post.scheduled_at).toLocaleDateString()}</span>
+                      </div>
+                      <p className="text-xs text-slate-300 line-clamp-3 italic">"{post.content}"</p>
+                    </div>
+                  ))}
+               </div>
+            </Card>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const LiveCoachingView = () => {
+    const [isActive, setIsActive] = useState(false);
+    const [transcription, setTranscription] = useState<string[]>([]);
+    const [liveNotes, setLiveNotes] = useState<{note: string, category: string}[]>([]);
+    const [isConnecting, setIsConnecting] = useState(false);
+    
+    const sessionRef = useRef<any>(null);
+    const inputAudioCtxRef = useRef<AudioContext | null>(null);
+    const outputAudioCtxRef = useRef<AudioContext | null>(null);
+    const nextStartTimeRef = useRef(0);
+    const sourcesRef = useRef(new Set<AudioBufferSourceNode>());
+
+    const startSession = async () => {
+      setIsConnecting(true);
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const saveNoteFunction: FunctionDeclaration = {
+        name: 'saveLiveCoachingNote',
+        parameters: {
+          type: Type.OBJECT,
+          description: 'Save a coaching observation or note during a live session.',
+          properties: {
+            note: { type: Type.STRING, description: 'The text of the coaching note.' },
+            category: { type: Type.STRING, description: 'Category: Pace, Tone, Clarity, or Confidence.' },
+          },
+          required: ['note', 'category'],
+        },
+      };
+
+      inputAudioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      outputAudioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      const sessionPromise = ai.live.connect({
+        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+        callbacks: {
+          onopen: () => {
+            setIsActive(true);
+            setIsConnecting(false);
+            const source = inputAudioCtxRef.current!.createMediaStreamSource(stream);
+            const scriptProcessor = inputAudioCtxRef.current!.createScriptProcessor(4096, 1, 1);
+            scriptProcessor.onaudioprocess = (e) => {
+              const inputData = e.inputBuffer.getChannelData(0);
+              const int16 = new Int16Array(inputData.length);
+              for (let i = 0; i < inputData.length; i++) int16[i] = inputData[i] * 32768;
+              sessionPromise.then(session => session.sendRealtimeInput({ media: { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' } }));
+            };
+            source.connect(scriptProcessor);
+            scriptProcessor.connect(inputAudioCtxRef.current!.destination);
+          },
+          onmessage: async (message: LiveServerMessage) => {
+            if (message.toolCall) {
+              for (const fc of message.toolCall.functionCalls) {
+                if (fc.name === 'saveLiveCoachingNote') {
+                  const { note, category } = fc.args as any;
+                  setLiveNotes(prev => [{ note, category }, ...prev]);
+                  await supabase.from('ai_requests').insert({ user_id: user.id, request_type: 'live_note', prompt: `Live Coaching Category: ${category}`, response: note });
+                  sessionPromise.then(s => s.sendToolResponse({ functionResponses: { id: fc.id, name: fc.name, response: { result: "Note saved successfully" } } }));
+                }
+              }
+            }
+            const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+            if (audioData && outputAudioCtxRef.current) {
+              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputAudioCtxRef.current.currentTime);
+              const buffer = await decodeAudioData(decode(audioData), outputAudioCtxRef.current, 24000, 1);
+              const source = outputAudioCtxRef.current.createBufferSource();
+              source.buffer = buffer;
+              source.connect(outputAudioCtxRef.current.destination);
+              source.start(nextStartTimeRef.current);
+              nextStartTimeRef.current += buffer.duration;
+              sourcesRef.current.add(source);
+              source.onended = () => sourcesRef.current.delete(source);
+            }
+            if (message.serverContent?.outputTranscription) { setTranscription(prev => [...prev.slice(-4), message.serverContent!.outputTranscription!.text]); }
+          },
+          onclose: () => stopSession(),
+          onerror: (e) => { console.error(e); stopSession(); }
+        },
+        config: {
+          responseModalities: [Modality.AUDIO],
+          systemInstruction: 'You are an elite speech coach. Listen and provide brief verbal tips.',
+          tools: [{ functionDeclarations: [saveNoteFunction] }],
+          outputAudioTranscription: {},
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } }
+        }
+      });
+      sessionRef.current = await sessionPromise;
+    };
+
+    const stopSession = () => {
+      setIsActive(false);
+      setIsConnecting(false);
+      sessionRef.current?.close();
+      inputAudioCtxRef.current?.close();
+      outputAudioCtxRef.current?.close();
+      sourcesRef.current.forEach(s => s.stop());
+      sourcesRef.current.clear();
+    };
+
+    return (
+      <div className="max-w-6xl mx-auto space-y-8 animate-fade-in">
+        <header className="flex justify-between items-center">
+          <div className="space-y-1">
+            <h2 className="text-4xl font-black text-white flex items-center gap-4">
+              <div className="p-3 rounded-2xl bg-rose-500/20 text-rose-400"><Radio size={32} /></div>
+              Live Studio
+            </h2>
+          </div>
+          <Button onClick={isActive ? stopSession : startSession} variant={isActive ? 'danger' : 'primary'} isLoading={isConnecting} className="!px-10 !py-5 text-lg font-black rounded-3xl">
+            {isActive ? <Power size={20} className="mr-2" /> : <Sparkles size={20} className="mr-2" />}
+            {isActive ? 'End Session' : 'Start Session'}
+          </Button>
+        </header>
+        <div className="grid lg:grid-cols-3 gap-8 h-[600px]">
+          <Card className="lg:col-span-2 flex flex-col items-center justify-center relative bg-slate-900/40 border-white/5">
+            {(isActive || isConnecting) ? (
+               <div className="flex flex-col items-center gap-12 w-full">
+                  <div className={`w-48 h-48 rounded-full border-4 border-white/10 flex items-center justify-center bg-slate-900 relative z-10 overflow-hidden shadow-2xl`}>
+                     <AudioLines className={`text-indigo-400 w-20 h-20 transition-all duration-500 ${isActive ? 'scale-110' : 'scale-50 opacity-20'}`} />
+                  </div>
+                  <div className="h-24 flex flex-col justify-center items-center gap-2">
+                     {transcription.map((t, i) => <p key={i} className="text-sm font-medium text-white">{t}</p>)}
+                  </div>
+               </div>
+            ) : <div className="text-center p-8"><Mic size={40} className="text-slate-600 mx-auto mb-4" /><p className="text-slate-500">Enable microphone to start.</p></div>}
+          </Card>
+          <Card className="bg-slate-800/20 flex flex-col border-white/5">
+             <div className="flex items-center gap-3 mb-6 p-2">
+                <div className="w-10 h-10 rounded-xl bg-indigo-500/20 flex items-center justify-center text-indigo-400"><ShieldCheck size={20} /></div>
+                <h4 className="text-sm font-black text-white uppercase tracking-wider">Session Analytics</h4>
+             </div>
+             <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-2">
+                {liveNotes.map((note, i) => (
+                  <div key={i} className="p-4 rounded-2xl bg-indigo-500/5 border border-indigo-500/10 animate-slide-up">
+                    <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">{note.category}</span>
+                    <p className="text-xs text-slate-300 italic mt-1">"{note.note}"</p>
+                  </div>
+                ))}
+             </div>
+          </Card>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-[#020617] text-slate-200">
       <Sidebar currentView={currentView} setView={setView} onLogout={onLogout} isOpen={isSidebarOpen} setIsOpen={setSidebarOpen} />
@@ -458,7 +570,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
           {currentView === AppView.DASHBOARD_COACHING && <CoachingView />}
           {currentView === AppView.DASHBOARD_LIVE_COACHING && <LiveCoachingView />}
           {currentView === AppView.DASHBOARD_CHATBOT && <ChatbotView />}
-          {currentView === AppView.DASHBOARD_SOCIAL && <div className="text-center py-20 text-slate-500 font-black uppercase tracking-widest text-xs">Social Scheduler Section</div>}
+          {currentView === AppView.DASHBOARD_SOCIAL && <SocialSchedulerView />}
           {currentView === AppView.DASHBOARD_HISTORY && <div className="text-center py-20 text-slate-500 font-black uppercase tracking-widest text-xs">History Section</div>}
           {currentView === AppView.DASHBOARD_LANDING_BUILDER && <div className="text-center py-20 text-slate-500 font-black uppercase tracking-widest text-xs">Landing Builder Section</div>}
           {currentView === AppView.DASHBOARD_PROFILE && <div className="text-center py-20 text-slate-500 font-black uppercase tracking-widest text-xs">Profile Settings Section</div>}

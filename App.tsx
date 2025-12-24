@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState, ErrorInfo, ReactNode, Component } from 'react';
+import React, { Component, useEffect, useState, ErrorInfo, ReactNode } from 'react';
 import { supabase } from './lib/supabase';
 import { Landing } from './pages/Landing';
 import { Auth } from './pages/Auth';
@@ -20,29 +20,32 @@ interface ErrorBoundaryState {
 }
 
 /**
- * Fix: Removed 'override' modifiers and used explicit 'Component' import to resolve 
- * compilation errors where the base class was not being correctly recognized.
+ * ErrorBoundary component to catch and display app-level crashes.
+ * Updated to fix property access issues (state/props) in strict TypeScript environments.
  */
 class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  // Fix: Removed override modifier (Error line 24)
+  // Fix: Explicitly declare the state property on the class to ensure visibility.
   public state: ErrorBoundaryState = { hasError: false, error: null };
 
   constructor(props: ErrorBoundaryProps) {
     super(props);
+    // Initialize state in constructor as well for robust setup.
+    this.state = { hasError: false, error: null };
   }
 
   static getDerivedStateFromError(error: Error) {
+    // Update state so the next render will show the fallback UI.
     return { hasError: true, error };
   }
 
-  // Fix: Removed override modifier (Error line 34)
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    // Log error details for debugging purposes.
     console.error("App Crash:", error, errorInfo);
   }
 
-  // Fix: Removed override modifier (Error line 38)
   render() {
     if (this.state.hasError) {
+      // Fallback UI shown when a child component crashes.
       return (
         <div className="min-h-screen bg-[#020617] flex items-center justify-center p-6 text-center">
           <div className="max-w-md bg-slate-900 border border-red-500/20 rounded-3xl p-8 shadow-2xl">
@@ -62,7 +65,8 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
         </div>
       );
     }
-    // Fix: Inheritance properly recognized so this.props exists (Error line 59)
+    
+    // Render child components normally if no error occurred.
     return this.props.children;
   }
 }
