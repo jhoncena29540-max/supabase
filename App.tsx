@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState, Component, ErrorInfo, ReactNode } from 'react';
+import React, { useEffect, useState, ErrorInfo, ReactNode, Component } from 'react';
 import { supabase } from './lib/supabase';
 import { Landing } from './pages/Landing';
 import { Auth } from './pages/Auth';
@@ -10,20 +10,37 @@ import { HashRouter, useLocation } from 'react-router-dom';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
 // Production-ready Error Boundary
-class ErrorBoundary extends React.Component<{ children?: ReactNode }, { hasError: boolean, error: Error | null }> {
-  constructor(props: { children?: ReactNode }) {
+interface ErrorBoundaryProps {
+  children?: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+/**
+ * Fix: Removed 'override' modifiers and used explicit 'Component' import to resolve 
+ * compilation errors where the base class was not being correctly recognized.
+ */
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  // Fix: Removed override modifier (Error line 24)
+  public state: ErrorBoundaryState = { hasError: false, error: null };
+
+  constructor(props: ErrorBoundaryProps) {
     super(props);
-    this.state = { hasError: false, error: null };
   }
 
   static getDerivedStateFromError(error: Error) {
     return { hasError: true, error };
   }
 
+  // Fix: Removed override modifier (Error line 34)
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error("App Crash:", error, errorInfo);
   }
 
+  // Fix: Removed override modifier (Error line 38)
   render() {
     if (this.state.hasError) {
       return (
@@ -45,6 +62,7 @@ class ErrorBoundary extends React.Component<{ children?: ReactNode }, { hasError
         </div>
       );
     }
+    // Fix: Inheritance properly recognized so this.props exists (Error line 59)
     return this.props.children;
   }
 }

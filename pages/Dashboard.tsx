@@ -7,34 +7,58 @@ import {
   Menu, Bell, Sparkles, Trash2, ChevronDown, Loader2, AlertTriangle, 
   ExternalLink, Send, Bot, User, Share2, Youtube, Instagram, Facebook, 
   Music2, Calendar, Clock, PlusCircle, PenLine, Info, History as LogsIcon,
-  Mic
+  Mic, Radio, Power, AudioLines, ShieldCheck
 } from 'lucide-react';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Input, TextArea } from '../components/Input';
 import { generateContentScript, generateCoachingAdvice, getChatResponse } from '../lib/gemini';
-import { Content } from "@google/genai";
+// Fix: Added 'Content' to imports to support the messages state type in ChatbotView
+import { GoogleGenAI, LiveServerMessage, Modality, Type, FunctionDeclaration, Content } from "@google/genai";
 
 interface DashboardProps {
   user: any; 
   onLogout: () => void;
 }
 
-const StatusBadge = ({ status }: { status: string }) => {
-  const styles: Record<string, string> = {
-    scheduled: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20',
-    published: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-    failed: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
-    publishing: 'bg-amber-500/10 text-amber-400 border-amber-500/20 animate-pulse',
-    active: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-    disconnected: 'bg-slate-800 text-slate-500 border-slate-700',
-  };
-  return (
-    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${styles[status.toLowerCase()] || 'bg-slate-800 text-slate-400'}`}>
-      {status}
-    </span>
-  );
-};
+// Utility functions for Audio Processing (as per GenAI SDK requirements)
+function encode(bytes: Uint8Array) {
+  let binary = '';
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function decode(base64: string) {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function decodeAudioData(
+  data: Uint8Array,
+  ctx: AudioContext,
+  sampleRate: number,
+  numChannels: number,
+): Promise<AudioBuffer> {
+  const dataInt16 = new Int16Array(data.buffer);
+  const frameCount = dataInt16.length / numChannels;
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+
+  for (let channel = 0; channel < numChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    for (let i = 0; i < frameCount; i++) {
+      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+    }
+  }
+  return buffer;
+}
 
 export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
   const [currentView, setView] = useState<AppView>(AppView.DASHBOARD_HOME);
@@ -49,272 +73,230 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
     fetchProfile();
   }, [user]);
 
-  // --- SOCIAL SCHEDULER ---
-  const SocialSchedulerView = () => {
-    const [activeTab, setActiveTab] = useState<'accounts' | 'composer' | 'queue' | 'logs'>('accounts');
-    const [accounts, setAccounts] = useState<any[]>([]);
-    const [posts, setPosts] = useState<any[]>([]);
-    const [logs, setLogs] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
+  // --- LIVE COACHING VIEW ---
+  const LiveCoachingView = () => {
+    const [isActive, setIsActive] = useState(false);
+    const [transcription, setTranscription] = useState<string[]>([]);
+    const [liveNotes, setLiveNotes] = useState<{note: string, category: string}[]>([]);
+    const [isConnecting, setIsConnecting] = useState(false);
+    
+    const sessionRef = useRef<any>(null);
+    const inputAudioCtxRef = useRef<AudioContext | null>(null);
+    const outputAudioCtxRef = useRef<AudioContext | null>(null);
+    const nextStartTimeRef = useRef(0);
+    const sourcesRef = useRef(new Set<AudioBufferSourceNode>());
 
-    // Form
-    const [selectedAccountId, setSelectedAccountId] = useState('');
-    const [postContent, setPostContent] = useState('');
-    const [scheduleTime, setScheduleTime] = useState('');
-    const [isSubmitting, setIsSubmitting] = useState(false);
+    const startSession = async () => {
+      setIsConnecting(true);
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      
+      // Define the "Function" we want to connect to our app
+      const saveNoteFunction: FunctionDeclaration = {
+        name: 'saveLiveCoachingNote',
+        parameters: {
+          type: Type.OBJECT,
+          description: 'Save a coaching observation or note during a live session.',
+          properties: {
+            note: { type: Type.STRING, description: 'The text of the coaching note.' },
+            category: { type: Type.STRING, description: 'Category: Pace, Tone, Clarity, or Confidence.' },
+          },
+          required: ['note', 'category'],
+        },
+      };
 
-    useEffect(() => {
-      fetchSocialData();
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('auth_success') === 'true') {
-        window.history.replaceState({}, document.title, window.location.pathname);
-        fetchSocialData();
-      }
-    }, []);
+      inputAudioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      outputAudioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-    const fetchSocialData = async () => {
-      setLoading(true);
-      try {
-        const { data: accs } = await supabase.from('social_accounts').select('*').eq('user_id', user.id);
-        const { data: pst } = await supabase.from('social_posts').select('*, social_accounts(account_name, platform, avatar_url)').eq('user_id', user.id).order('scheduled_at', { ascending: true });
-        const { data: lgs } = await supabase.from('social_publish_logs').select('*, social_posts(content, platform_post_url)').order('created_at', { ascending: false });
-        if (accs) setAccounts(accs);
-        if (pst) setPosts(pst);
-        if (lgs) setLogs(lgs);
-      } catch (e) { console.error(e); } finally { setLoading(false); }
+      const sessionPromise = ai.live.connect({
+        model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+        callbacks: {
+          onopen: () => {
+            setIsActive(true);
+            setIsConnecting(false);
+            const source = inputAudioCtxRef.current!.createMediaStreamSource(stream);
+            const scriptProcessor = inputAudioCtxRef.current!.createScriptProcessor(4096, 1, 1);
+            
+            scriptProcessor.onaudioprocess = (e) => {
+              const inputData = e.inputBuffer.getChannelData(0);
+              const int16 = new Int16Array(inputData.length);
+              for (let i = 0; i < inputData.length; i++) int16[i] = inputData[i] * 32768;
+              
+              sessionPromise.then(session => {
+                session.sendRealtimeInput({
+                  media: { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' }
+                });
+              });
+            };
+            source.connect(scriptProcessor);
+            scriptProcessor.connect(inputAudioCtxRef.current!.destination);
+          },
+          onmessage: async (message: LiveServerMessage) => {
+            // Handle Tool/Function Calls
+            if (message.toolCall) {
+              for (const fc of message.toolCall.functionCalls) {
+                if (fc.name === 'saveLiveCoachingNote') {
+                  const { note, category } = fc.args as any;
+                  setLiveNotes(prev => [{ note, category }, ...prev]);
+                  
+                  // Connect to Backend (Supabase)
+                  await supabase.from('ai_requests').insert({
+                    user_id: user.id,
+                    request_type: 'live_note',
+                    prompt: `Live Coaching Category: ${category}`,
+                    response: note
+                  });
+
+                  sessionPromise.then(s => s.sendToolResponse({
+                    functionResponses: { id: fc.id, name: fc.name, response: { result: "Note saved successfully" } }
+                  }));
+                }
+              }
+            }
+
+            // Handle Audio
+            const audioData = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
+            if (audioData && outputAudioCtxRef.current) {
+              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputAudioCtxRef.current.currentTime);
+              const buffer = await decodeAudioData(decode(audioData), outputAudioCtxRef.current, 24000, 1);
+              const source = outputAudioCtxRef.current.createBufferSource();
+              source.buffer = buffer;
+              source.connect(outputAudioCtxRef.current.destination);
+              source.start(nextStartTimeRef.current);
+              nextStartTimeRef.current += buffer.duration;
+              sourcesRef.current.add(source);
+              source.onended = () => sourcesRef.current.delete(source);
+            }
+
+            // Handle Transcription
+            if (message.serverContent?.outputTranscription) {
+               const text = message.serverContent.outputTranscription.text;
+               setTranscription(prev => [...prev.slice(-4), text]);
+            }
+          },
+          onclose: () => stopSession(),
+          onerror: (e) => { console.error(e); stopSession(); }
+        },
+        config: {
+          responseModalities: [Modality.AUDIO],
+          systemInstruction: 'You are an elite speech coach. Listen to the user talk. Provide short, constructive verbal feedback. If you notice a specific habit (filler words, too fast, great energy), use the saveLiveCoachingNote function to record it.',
+          tools: [{ functionDeclarations: [saveNoteFunction] }],
+          outputAudioTranscription: {},
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } }
+        }
+      });
+
+      sessionRef.current = await sessionPromise;
     };
 
-    const handleOAuth = (platform: string) => {
-      const functionUrl = `https://hckjalcigpjdqcqhglhl.supabase.co/functions/v1/social-auth-redirect`;
-      const redirectUri = encodeURIComponent(`${window.location.origin}${window.location.pathname}`);
-      window.location.href = `${functionUrl}?platform=${platform.toLowerCase()}&user_id=${user.id}&redirect_uri=${redirectUri}`;
-    };
-
-    const handleSchedule = async (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!selectedAccountId || !postContent || !scheduleTime) return;
-      setIsSubmitting(true);
-      try {
-        const { error } = await supabase.from('social_posts').insert({
-          user_id: user.id,
-          account_id: selectedAccountId,
-          content: postContent,
-          scheduled_at: new Date(scheduleTime).toISOString(),
-          status: 'scheduled'
-        });
-        if (error) throw error;
-        setPostContent('');
-        setScheduleTime('');
-        await fetchSocialData();
-        setActiveTab('queue');
-      } catch (err) { alert("Failed to schedule post."); } finally { setIsSubmitting(false); }
-    };
-
-    const getIcon = (p: string) => {
-      switch (p.toLowerCase()) {
-        case 'youtube': return <Youtube size={20} className="text-red-500" />;
-        case 'facebook': return <Facebook size={20} className="text-blue-600" />;
-        case 'instagram': return <Instagram size={20} className="text-pink-500" />;
-        case 'tiktok': return <Music2 size={20} className="text-emerald-400" />;
-        default: return <Share2 size={20} />;
-      }
+    const stopSession = () => {
+      setIsActive(false);
+      setIsConnecting(false);
+      sessionRef.current?.close();
+      inputAudioCtxRef.current?.close();
+      outputAudioCtxRef.current?.close();
+      sourcesRef.current.forEach(s => s.stop());
+      sourcesRef.current.clear();
     };
 
     return (
       <div className="max-w-6xl mx-auto space-y-8 animate-fade-in">
-        <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+        <header className="flex justify-between items-center">
           <div className="space-y-1">
             <h2 className="text-4xl font-black text-white flex items-center gap-4">
-              <div className="p-3 rounded-2xl bg-pink-500/20 text-pink-400 shadow-lg shadow-pink-500/10">
-                <Share2 size={32} />
+              <div className="p-3 rounded-2xl bg-rose-500/20 text-rose-400 shadow-lg shadow-rose-500/10">
+                <Radio size={32} />
               </div>
-              Social Scheduler
+              Live Studio
             </h2>
-            <p className="text-slate-500 font-medium ml-1">Real-time multi-platform publishing engine.</p>
+            <p className="text-slate-500 font-medium ml-1">Real-time verbal coaching with automatic milestone logging.</p>
           </div>
-          <div className="flex bg-slate-900/60 p-1.5 rounded-[20px] border border-white/5 backdrop-blur-xl">
-            {(['accounts', 'composer', 'queue', 'logs'] as const).map(tab => (
-              <button key={tab} onClick={() => setActiveTab(tab)} className={`px-6 py-2.5 rounded-[14px] text-xs font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}>
-                {tab}
-              </button>
-            ))}
-          </div>
+          <Button 
+            onClick={isActive ? stopSession : startSession} 
+            variant={isActive ? 'danger' : 'primary'}
+            isLoading={isConnecting}
+            className="!px-10 !py-5 text-lg font-black rounded-3xl shadow-2xl"
+          >
+            {isActive ? <Power size={20} className="mr-2" /> : <Sparkles size={20} className="mr-2" />}
+            {isActive ? 'End Session' : 'Start Session'}
+          </Button>
         </header>
 
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-24 gap-4">
-            <Loader2 className="w-12 h-12 text-indigo-500 animate-spin" />
-            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Syncing API Streams...</p>
-          </div>
-        ) : (
-          <div className="space-y-8">
-            {activeTab === 'accounts' && (
-              <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {['YouTube', 'Facebook', 'Instagram', 'TikTok'].map(platform => {
-                  const acc = accounts.find(a => a.platform.toLowerCase() === platform.toLowerCase());
-                  return (
-                    <Card key={platform} className={`relative overflow-hidden transition-all duration-500 hover:translate-y-[-4px] ${acc ? 'border-indigo-500/30 bg-indigo-500/[0.03]' : 'border-white/5'}`}>
-                      <div className="flex items-center justify-between mb-8">
-                        <div className={`p-3.5 rounded-2xl ${acc ? 'bg-indigo-500/20' : 'bg-slate-800'}`}>
-                          {getIcon(platform)}
-                        </div>
-                        <StatusBadge status={acc ? acc.status : 'Disconnected'} />
-                      </div>
-                      {acc ? (
-                        <div className="space-y-6">
-                          <div className="flex items-center gap-4">
-                            <img src={acc.avatar_url} className="w-14 h-14 rounded-2xl bg-slate-800 border-2 border-white/5 shadow-xl" alt="DP" />
-                            <div className="min-w-0">
-                              <p className="text-white font-black truncate text-lg leading-tight">{acc.account_name}</p>
-                              <p className="text-slate-500 text-sm font-medium">@{acc.username}</p>
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-2 gap-4 pt-6 border-t border-white/5">
-                            <div className="space-y-1">
-                              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Followers</p>
-                              <p className="text-white font-black text-xl">{(acc.metrics?.followers || 0).toLocaleString()}</p>
-                            </div>
-                            <div className="space-y-1">
-                              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Engmnt</p>
-                              <p className="text-white font-black text-xl">{(acc.metrics?.engagement || 0).toFixed(1)}%</p>
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="space-y-6">
-                          <p className="text-sm text-slate-400 font-medium">Connect your official {platform} account via secure OAuth.</p>
-                          <Button onClick={() => handleOAuth(platform)} className="w-full !py-4 font-black">Authorize</Button>
-                        </div>
-                      )}
-                    </Card>
-                  );
-                })}
+        <div className="grid lg:grid-cols-3 gap-8 h-[600px]">
+          {/* Main Visualizer */}
+          <Card className="lg:col-span-2 flex flex-col items-center justify-center relative overflow-hidden bg-slate-900/40 border-white/5">
+            {!isActive && !isConnecting && (
+              <div className="text-center space-y-4 max-w-sm">
+                <div className="w-24 h-24 bg-slate-800 rounded-full flex items-center justify-center mx-auto border border-white/5">
+                  <Mic size={40} className="text-slate-600" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-400">Ready to speak?</h3>
+                <p className="text-sm text-slate-500">Enable your microphone to start a conversational coaching session with SpeakCoaching AI.</p>
               </div>
             )}
 
-            {activeTab === 'composer' && (
-              <div className="grid lg:grid-cols-3 gap-8 items-start">
-                <Card className="lg:col-span-2 shadow-2xl bg-slate-800/30 backdrop-blur-3xl">
-                  <form onSubmit={handleSchedule} className="space-y-8">
-                    <div className="space-y-3">
-                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-1">Destination</label>
-                      <select value={selectedAccountId} onChange={(e) => setSelectedAccountId(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-2xl px-5 py-4 text-white font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all cursor-pointer" required>
-                        <option value="">Choose active account...</option>
-                        {accounts.filter(a => a.status === 'active').map(acc => (
-                          <option key={acc.id} value={acc.id}>{acc.platform.toUpperCase()} — {acc.account_name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="space-y-3">
-                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-1">Post Content</label>
-                      <TextArea placeholder="Paste your AI-generated script here..." rows={8} value={postContent} onChange={(e) => setPostContent(e.target.value)} className="!bg-slate-900 !border-slate-700 font-medium" required />
-                    </div>
-                    <div className="grid md:grid-cols-2 gap-8">
-                      <div className="space-y-3">
-                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-1 flex items-center gap-2"><Calendar size={12} className="text-indigo-500" /> Schedule</label>
-                        <input type="datetime-local" value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-2xl px-5 py-4 text-white font-bold focus:ring-2 focus:ring-indigo-500 outline-none" required />
-                      </div>
-                      <div className="space-y-3">
-                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] ml-1 flex items-center gap-2"><PlusCircle size={12} className="text-indigo-500" /> Media</label>
-                        <div className="h-[58px] border-2 border-dashed border-slate-700 rounded-2xl flex items-center justify-center text-slate-500 text-xs font-bold uppercase tracking-widest hover:border-indigo-500 transition-all cursor-pointer bg-slate-900/40">Select Assets</div>
-                      </div>
-                    </div>
-                    <div className="pt-6 flex gap-4">
-                      <Button type="submit" isLoading={isSubmitting} className="flex-1 !py-5 text-lg font-black shadow-2xl shadow-indigo-600/20"><Send size={20} className="mr-2" /> Schedule Now</Button>
-                      <Button variant="secondary" type="button" className="!py-5 px-8 font-black uppercase tracking-widest text-xs border-white/5">Save Draft</Button>
-                    </div>
-                  </form>
-                </Card>
-                <div className="space-y-6">
-                  <Card className="bg-gradient-to-br from-indigo-600/20 to-purple-600/20 border-white/10 p-8">
-                    <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center mb-6 text-white shadow-xl"><Bot size={30} /></div>
-                    <h3 className="text-xl font-black text-white mb-3">Optimize Hooks</h3>
-                    <p className="text-slate-400 text-sm font-medium mb-6 leading-relaxed">Let AI refine your caption for maximum reach on specifically chosen platforms.</p>
-                    <Button variant="secondary" className="w-full font-black border-white/10" onClick={() => setView(AppView.DASHBOARD_CHATBOT)}>Analyze Script</Button>
-                  </Card>
+            {(isActive || isConnecting) && (
+              <div className="flex flex-col items-center gap-12 w-full">
+                {/* Voice Orb */}
+                <div className="relative">
+                  <div className={`absolute inset-0 bg-indigo-500/30 blur-[60px] rounded-full transition-all duration-300 ${isActive ? 'scale-125 animate-pulse' : 'scale-0'}`}></div>
+                  <div className={`w-48 h-48 rounded-full border-4 border-white/10 flex items-center justify-center bg-slate-900 relative z-10 overflow-hidden shadow-2xl`}>
+                     <AudioLines className={`text-indigo-400 w-20 h-20 transition-all duration-500 ${isActive ? 'scale-110 rotate-12' : 'scale-50 opacity-20'}`} />
+                  </div>
+                </div>
+
+                <div className="text-center space-y-4 w-full px-12">
+                   <p className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-400 animate-pulse">Live Transcription Feed</p>
+                   <div className="h-24 flex flex-col justify-center items-center gap-2">
+                     {transcription.map((t, i) => (
+                       <p key={i} className={`text-sm font-medium transition-all duration-700 ${i === transcription.length - 1 ? 'text-white scale-105' : 'text-slate-500 opacity-50 text-xs'}`}>{t}</p>
+                     ))}
+                   </div>
                 </div>
               </div>
             )}
+          </Card>
 
-            {activeTab === 'queue' && (
-              <Card className="!p-0 overflow-hidden border-white/5 shadow-2xl">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="bg-slate-900 border-b border-white/5">
-                        <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Platform</th>
-                        <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Content</th>
-                        <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Time</th>
-                        <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Status</th>
-                        <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {posts.length === 0 ? (
-                        <tr><td colSpan={5} className="px-8 py-20 text-center text-slate-600 font-bold uppercase tracking-widest text-sm">No pending posts.</td></tr>
-                      ) : (
-                        posts.map(post => (
-                          <tr key={post.id} className="hover:bg-white/[0.01] transition-colors group">
-                            <td className="px-8 py-6">
-                              <div className="flex items-center gap-4">
-                                <img src={post.social_accounts?.avatar_url} className="w-10 h-10 rounded-xl bg-slate-800" alt="Av" />
-                                <div className="flex flex-col">
-                                  <span className="text-sm font-black text-white">{post.social_accounts?.account_name}</span>
-                                  <span className="text-[10px] text-indigo-400 font-black uppercase tracking-widest">{post.social_accounts?.platform}</span>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-8 py-6"><p className="text-xs text-slate-300 font-medium line-clamp-1 max-w-xs">{post.content}</p></td>
-                            <td className="px-8 py-6">
-                              <div className="flex items-center gap-2 text-slate-400 text-xs font-bold">
-                                <Clock size={12} className="text-indigo-500" /> {new Date(post.scheduled_at).toLocaleString()}
-                              </div>
-                            </td>
-                            <td className="px-8 py-6"><StatusBadge status={post.status} /></td>
-                            <td className="px-8 py-6 text-right">
-                              <div className="flex justify-end gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-xl transition-all"><PenLine size={16}/></button>
-                                <button className="p-2.5 bg-slate-800 hover:bg-red-500/20 text-red-400 rounded-xl transition-all"><Trash2 size={16}/></button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+          {/* AI Log (Connected Function Data) */}
+          <Card className="bg-slate-800/20 flex flex-col border-white/5 shadow-2xl">
+             <div className="flex items-center gap-3 mb-6 p-2">
+                <div className="w-10 h-10 rounded-xl bg-indigo-500/20 flex items-center justify-center text-indigo-400">
+                   <ShieldCheck size={20} />
                 </div>
-              </Card>
-            )}
+                <div>
+                   <h4 className="text-sm font-black text-white uppercase tracking-wider">Session Analytics</h4>
+                   <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Real-time function calls</p>
+                </div>
+             </div>
 
-            {activeTab === 'logs' && (
-              <div className="space-y-5">
-                {logs.length === 0 ? (
-                  <div className="text-center py-24 bg-slate-900/30 rounded-[40px] border-2 border-dashed border-white/5">
-                    <LogsIcon size={56} className="text-slate-800 mx-auto mb-6" />
-                    <p className="text-slate-500 font-black uppercase tracking-[0.3em] text-xs">Audit trail empty.</p>
+             <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-2">
+                {liveNotes.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center p-8 space-y-4">
+                    <LogsIcon size={40} className="text-slate-800" />
+                    <p className="text-xs text-slate-600 font-bold uppercase tracking-widest">No notes yet.<br/>Speak to trigger analysis.</p>
                   </div>
                 ) : (
-                  logs.map(log => (
-                    <Card key={log.id} className="flex flex-col md:flex-row md:items-center justify-between gap-8 hover:border-indigo-500/20 transition-all border-white/5 group bg-slate-800/20 shadow-xl">
-                      <div className="flex-1 space-y-4">
-                        <div className="flex items-center gap-4">
-                          <StatusBadge status={log.status} />
-                          <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{new Date(log.created_at).toLocaleString()}</span>
-                        </div>
-                        <p className="text-sm text-slate-300 font-medium line-clamp-2 italic font-mono bg-black/30 p-4 rounded-2xl border border-white/5">"{log.social_posts?.content}"</p>
-                        {log.error_details && <div className="flex items-center gap-2 text-xs font-bold text-red-400 bg-red-400/5 p-3 rounded-xl border border-red-400/10"><AlertTriangle size={14} /> Error: {log.error_details} (HTTP {log.http_status})</div>}
-                      </div>
-                      <div className="flex items-center gap-4 shrink-0">
-                        {log.social_posts?.platform_post_url && <a href={log.social_posts.platform_post_url} target="_blank" className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-2xl text-xs font-black text-white shadow-xl transition-all"><ExternalLink size={16} /> View Post</a>}
-                        <button className="flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 rounded-2xl text-xs font-black text-slate-300 border border-white/5 transition-all"><Info size={16} className="text-indigo-400" /> API Trace</button>
-                      </div>
-                    </Card>
+                  liveNotes.map((note, i) => (
+                    <div key={i} className="p-4 rounded-2xl bg-indigo-500/5 border border-indigo-500/10 animate-slide-up">
+                       <div className="flex justify-between items-center mb-2">
+                          <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">{note.category}</span>
+                          <div className="w-2 h-2 rounded-full bg-indigo-500 animate-ping"></div>
+                       </div>
+                       <p className="text-xs text-slate-300 font-medium leading-relaxed italic">"{note.note}"</p>
+                    </div>
                   ))
                 )}
-              </div>
-            )}
-          </div>
-        )}
+             </div>
+
+             <div className="mt-6 pt-6 border-t border-white/5">
+                <div className="flex items-center justify-between text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">
+                   <span>Auto-Synced to DB</span>
+                   <span className="text-emerald-400 flex items-center gap-1"><div className="w-1.5 h-1.5 rounded-full bg-emerald-400"></div> Connected</span>
+                </div>
+             </div>
+          </Card>
+        </div>
       </div>
     );
   };
@@ -333,10 +315,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
           <p className="text-sm text-slate-400 mb-4">Create speeches, presentation notes, and more.</p>
           <Button onClick={() => setView(AppView.DASHBOARD_CONTENT)} className="w-full">Open Studio</Button>
         </Card>
-        <Card className="bg-gradient-to-br from-purple-900/40 to-slate-800/40 border-purple-500/20 group hover:border-purple-500/40 transition-all">
-          <h3 className="text-lg font-semibold text-white mb-2">Get Coaching</h3>
-          <p className="text-sm text-slate-400 mb-4">Get AI feedback on tone, clarity, and confidence.</p>
-          <Button onClick={() => setView(AppView.DASHBOARD_COACHING)} variant="secondary" className="w-full">Start Practice</Button>
+        <Card className="bg-gradient-to-br from-rose-900/40 to-slate-800/40 border-rose-500/20 group hover:border-rose-500/40 transition-all">
+          <h3 className="text-lg font-semibold text-white mb-2">Live Session</h3>
+          <p className="text-sm text-slate-400 mb-4">Start a real-time conversational coaching session.</p>
+          <Button onClick={() => setView(AppView.DASHBOARD_LIVE_COACHING)} className="w-full">Start Live</Button>
         </Card>
         <Card className="bg-gradient-to-br from-pink-900/40 to-slate-800/40 border-pink-500/20 group hover:border-pink-500/40 transition-all">
           <h3 className="text-lg font-semibold text-white mb-2">Social Scheduler</h3>
@@ -396,14 +378,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
 
     return (
       <div className="max-w-4xl mx-auto space-y-6">
-        <h2 className="text-2xl font-bold text-white flex items-center gap-2"><Mic size={24} className="text-indigo-400" /> Speak Coaching</h2>
+        <h2 className="text-2xl font-bold text-white flex items-center gap-2"><Mic size={24} className="text-indigo-400" /> Analysis Lab</h2>
         <div className="grid lg:grid-cols-2 gap-6">
           <Card className="flex flex-col gap-4">
-            <TextArea label="Your Speech" value={input} onChange={e => setInput(e.target.value)} rows={12} placeholder="Paste draft here..." className="flex-1" />
-            <Button onClick={handleCoach} isLoading={loading} disabled={!input}>Analyze Delivery</Button>
+            <TextArea label="Speech Draft" value={input} onChange={e => setInput(e.target.value)} rows={12} placeholder="Paste draft here..." className="flex-1" />
+            <Button onClick={handleCoach} isLoading={loading} disabled={!input}>Analyze Content</Button>
           </Card>
           <Card className="bg-slate-900/50">
-             {advice ? <div className="prose prose-invert max-w-none text-sm text-slate-300 whitespace-pre-wrap">{advice}</div> : <div className="h-full flex flex-col items-center justify-center text-slate-500 text-center px-12 italic">Enter text on the left to receive AI coaching feedback.</div>}
+             {advice ? <div className="prose prose-invert max-w-none text-sm text-slate-300 whitespace-pre-wrap">{advice}</div> : <div className="h-full flex flex-col items-center justify-center text-slate-500 text-center px-12 italic">Enter text on the left to receive deep analysis of your written content.</div>}
           </Card>
         </div>
       </div>
@@ -450,7 +432,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
             <div ref={endRef} />
           </div>
           <form onSubmit={handleSend} className="p-4 bg-slate-900 border-t border-white/5 relative">
-            <input type="text" value={input} onChange={e => setInput(e.target.value)} placeholder="Type a message..." className="w-full bg-slate-950 border border-slate-700 rounded-xl py-4 pl-5 pr-14 text-sm font-medium focus:ring-2 focus:ring-indigo-500 outline-none" />
+            <input type="text" value={input} onChange={e => setInput(e.target.value)} placeholder="Ask anything about public speaking..." className="w-full bg-slate-950 border border-slate-700 rounded-xl py-4 pl-5 pr-14 text-sm font-medium focus:ring-2 focus:ring-indigo-500 outline-none" />
             <button type="submit" disabled={!input.trim() || loading} className="absolute right-6 top-1/2 -translate-y-1/2 p-2.5 bg-indigo-600 hover:bg-indigo-500 rounded-lg disabled:opacity-50"><Send size={18} /></button>
           </form>
         </Card>
@@ -474,9 +456,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
           {currentView === AppView.DASHBOARD_HOME && <HomeView />}
           {currentView === AppView.DASHBOARD_CONTENT && <ContentView />}
           {currentView === AppView.DASHBOARD_COACHING && <CoachingView />}
+          {currentView === AppView.DASHBOARD_LIVE_COACHING && <LiveCoachingView />}
           {currentView === AppView.DASHBOARD_CHATBOT && <ChatbotView />}
-          {currentView === AppView.DASHBOARD_SOCIAL && <SocialSchedulerView />}
-          {currentView === AppView.DASHBOARD_LANDING_BUILDER && <div className="text-center py-20 text-slate-500 font-black uppercase tracking-widest text-xs">Landing Builder maintained in App.tsx</div>}
+          {currentView === AppView.DASHBOARD_SOCIAL && <div className="text-center py-20 text-slate-500 font-black uppercase tracking-widest text-xs">Social Scheduler Section</div>}
+          {currentView === AppView.DASHBOARD_HISTORY && <div className="text-center py-20 text-slate-500 font-black uppercase tracking-widest text-xs">History Section</div>}
+          {currentView === AppView.DASHBOARD_LANDING_BUILDER && <div className="text-center py-20 text-slate-500 font-black uppercase tracking-widest text-xs">Landing Builder Section</div>}
           {currentView === AppView.DASHBOARD_PROFILE && <div className="text-center py-20 text-slate-500 font-black uppercase tracking-widest text-xs">Profile Settings Section</div>}
           {currentView === AppView.DASHBOARD_CONTACT && <div className="text-center py-20 text-slate-500 font-black uppercase tracking-widest text-xs">Support Contact Channel</div>}
         </main>

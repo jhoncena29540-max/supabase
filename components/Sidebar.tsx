@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { LayoutDashboard, PenTool, Mic, History, User, LogOut, X, Loader2, Globe, MessageSquare, Sparkles, Mail, Share2 } from 'lucide-react';
+import { LayoutDashboard, PenTool, Mic, History, User, LogOut, X, Loader2, Globe, MessageSquare, Sparkles, Mail, Share2, Radio } from 'lucide-react';
 import { AppView } from '../types';
 
 interface SidebarProps {
@@ -16,14 +16,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, onLogout
   
   const navItems = [
     { view: AppView.DASHBOARD_HOME, label: 'Overview', icon: LayoutDashboard, color: 'from-blue-500 to-indigo-500' },
+    { view: AppView.DASHBOARD_LIVE_COACHING, label: 'Live Session', icon: Radio, color: 'from-rose-500 to-orange-500' },
     { view: AppView.DASHBOARD_CHATBOT, label: 'AI Assistant', icon: MessageSquare, color: 'from-green-400 to-emerald-600' },
     { view: AppView.DASHBOARD_CONTENT, label: 'Content Studio', icon: PenTool, color: 'from-purple-500 to-pink-500' },
-    { view: AppView.DASHBOARD_COACHING, label: 'Speak Coaching', icon: Mic, color: 'from-orange-400 to-red-500' },
+    { view: AppView.DASHBOARD_COACHING, label: 'Analysis Lab', icon: Mic, color: 'from-indigo-400 to-blue-500' },
     { view: AppView.DASHBOARD_SOCIAL, label: 'Social Scheduler', icon: Share2, color: 'from-pink-500 to-rose-600' },
     { view: AppView.DASHBOARD_LANDING_BUILDER, label: 'Landing Builder', icon: Globe, color: 'from-cyan-400 to-blue-600' },
     { view: AppView.DASHBOARD_HISTORY, label: 'History', icon: History, color: 'from-slate-400 to-slate-600' },
     { view: AppView.DASHBOARD_PROFILE, label: 'Profile', icon: User, color: 'from-indigo-400 to-purple-500' },
-    { view: AppView.DASHBOARD_CONTACT, label: 'Contact Support', icon: Mail, color: 'from-amber-400 to-orange-500' },
+    { view: AppView.DASHBOARD_CONTACT, label: 'Support', icon: Mail, color: 'from-amber-400 to-orange-500' },
   ];
 
   const handleLogout = async () => {
@@ -38,7 +39,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, onLogout
 
   return (
     <>
-      {/* Mobile Overlay */}
       {isOpen && (
         <div 
           className="fixed inset-0 bg-black/80 backdrop-blur-sm z-40 lg:hidden"
@@ -46,22 +46,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, onLogout
         />
       )}
 
-      {/* Sidebar Container */}
       <aside className={`
         fixed top-0 left-0 h-full w-72 bg-[#0a0f1d] border-r border-white/5 z-50 transform transition-transform duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]
         ${isOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0
       `}>
         <div className="flex flex-col h-full">
-          {/* Header */}
           <div className="p-8 flex items-center justify-between">
             <div className="flex items-center gap-3 group cursor-pointer" onClick={() => setView(AppView.DASHBOARD_HOME)}>
               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:scale-110 transition-transform duration-300">
                 <Mic className="text-white w-6 h-6" />
               </div>
               <div>
-                <h1 className="text-lg font-black tracking-tight text-white leading-none">
-                  SPEAK
-                </h1>
+                <h1 className="text-lg font-black tracking-tight text-white leading-none">SPEAK</h1>
                 <span className="text-[10px] font-bold tracking-[0.2em] text-indigo-400 uppercase">Coaching AI</span>
               </div>
             </div>
@@ -70,8 +66,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, onLogout
             </button>
           </div>
 
-          {/* Navigation */}
-          <nav className="flex-1 px-4 py-2 space-y-2 overflow-y-auto custom-scrollbar">
+          <nav className="flex-1 px-4 py-2 space-y-1 overflow-y-auto custom-scrollbar">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = currentView === item.view;
@@ -106,7 +101,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, onLogout
             })}
           </nav>
 
-          {/* Footer / Logout */}
           <div className="p-6 mt-auto">
              <div className="bg-slate-900/50 rounded-3xl p-4 border border-white/5 mb-4 hidden lg:block">
                 <div className="flex items-center gap-3 mb-3">

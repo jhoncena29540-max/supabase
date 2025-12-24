@@ -1,5 +1,7 @@
 {
   "name": "SpeakCoaching AI",
   "description": "A professional AI-powered platform for speech coaching, content script writing, and presentation preparation with a premium glassmorphism design.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "microphone"
+  ]
 }
